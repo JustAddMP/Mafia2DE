@@ -1,5 +1,5 @@
 // Copied from JustAddMP core 8c9c0fd src/dll/coop_ui.cpp: the same panels, look and input. Mafia II DE changes
-// (menu-only build): dll/coop.h is a stand-in without networking, no compat banner (core/compat.h), the CO-OP panel
+// (menu-only build): dll/coop.h is a stand-in without networking, no compat or start banner, the CO-OP panel
 // lists LOBBY while not in a session (the lobby is otherwise only reachable from a session), the hotkey toggles the
 // CO-OP panel, and the settings note says the settings are not saved.
 #include "dll/coop_ui.h"
@@ -35,7 +35,6 @@ constexpr uint32_t kPanelBg = 0xE60D0C0B;
 constexpr uint32_t kToastBg = 0xE0100E0C;
 
 constexpr float kToastSeconds = 5.0f;
-constexpr float kCompatToastSeconds = 45.0f;
 constexpr float kFade = 0.25f;
 
 struct Toast {
@@ -1382,13 +1381,9 @@ std::string CoopUi::Describe() {
 
 void CoopUi::Tick(float dt) {
     UiState& u = U();
-    if (!u.compatChecked) {  // first frame: say what this build is
-        u.compatChecked = true;
-        AddToast("CO-OP MENU PREVIEW",
-                 std::string(GetGameInfo().modName) + " " + GetGameInfo().modVersion +
-                     ": press F8 for the co-op menu. Hosting and joining are not available yet.",
-                 false, 12.0f);
-    }
+    // (no start banner: the CO-OP entries live in the game's own menus, game/menu_patch.h; these overlay panels are
+    // the F8 fallback for testing)
+    u.compatChecked = true;
     u.info = Coop::GetInfo();
     // The session ended (left, kicked, the host left): a lobby of that session has nothing left to show.
     const bool inSession = u.info.phase != Coop::Phase::Idle;

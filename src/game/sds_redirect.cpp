@@ -20,6 +20,15 @@ using CreateFileWFn = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUT
 using CreateFileAFn = HANDLE(WINAPI*)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 CreateFileWFn _origW = nullptr;
 CreateFileAFn _origA = nullptr;
+// The size the game may ask for by name (before or instead of opening) must be our copy's, not the original's.
+using GetAttrWFn = DWORD(WINAPI*)(LPCWSTR);
+using GetAttrAFn = DWORD(WINAPI*)(LPCSTR);
+using GetAttrExWFn = BOOL(WINAPI*)(LPCWSTR, GET_FILEEX_INFO_LEVELS, LPVOID);
+using GetAttrExAFn = BOOL(WINAPI*)(LPCSTR, GET_FILEEX_INFO_LEVELS, LPVOID);
+GetAttrWFn _origAttrW = nullptr;
+GetAttrAFn _origAttrA = nullptr;
+GetAttrExWFn _origAttrExW = nullptr;
+GetAttrExAFn _origAttrExA = nullptr;
 
 std::wstring _cacheDir;
 thread_local bool _busy = false;  // our own file access while building (never redirected)
@@ -151,7 +160,7 @@ std::wstring Redirect(const std::wstring& path) {
     if (_busy || path.empty()) return {};
     const std::wstring lower = Lower(path);
     if (!EndsWith(lower, L".sds")) return {};
-    const Kind kind = Classify(lower);
+    const Kind kind = Classify(L"\\" + lower);  // also a relative "sds/gui/..."
     if (_sdsOpensLogged < 40) {
         ++_sdsOpensLogged;
         MC_LOG_INFO("sds: game opens %s", Narrow(path).c_str());
@@ -179,18 +188,37 @@ HANDLE WINAPI CreateFileWDetour(LPCWSTR name, DWORD access, DWORD share, LPSECUR
     return _origW(name, access, share, sa, disp, flags, tpl);
 }
 
+std::wstring RedirectA(LPCSTR name) {
+    if (!name || _busy) return {};
+    const int n = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
+    if (n <= 1) return {};
+    std::wstring w(static_cast<size_t>(n - 1), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, name, -1, w.data(), n);
+    return Redirect(w);
+}
+
 HANDLE WINAPI CreateFileADetour(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp,
                                 DWORD flags, HANDLE tpl) {
-    if (name && !_busy) {
-        const int n = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
-        if (n > 1) {
-            std::wstring w(static_cast<size_t>(n - 1), L'\0');
-            MultiByteToWideChar(CP_ACP, 0, name, -1, w.data(), n);
-            const std::wstring to = Redirect(w);
-            if (!to.empty()) return _origW(to.c_str(), access, share, sa, disp, flags, tpl);
-        }
-    }
+    const std::wstring to = RedirectA(name);
+    if (!to.empty()) return _origW(to.c_str(), access, share, sa, disp, flags, tpl);
     return _origA(name, access, share, sa, disp, flags, tpl);
+}
+
+DWORD WINAPI GetAttrWDetour(LPCWSTR name) {
+    const std::wstring to = name && !_busy ? Redirect(name) : std::wstring();
+    return _origAttrW(to.empty() ? name : to.c_str());
+}
+DWORD WINAPI GetAttrADetour(LPCSTR name) {
+    const std::wstring to = RedirectA(name);
+    return to.empty() ? _origAttrA(name) : _origAttrW(to.c_str());
+}
+BOOL WINAPI GetAttrExWDetour(LPCWSTR name, GET_FILEEX_INFO_LEVELS level, LPVOID info) {
+    const std::wstring to = name && !_busy ? Redirect(name) : std::wstring();
+    return _origAttrExW(to.empty() ? name : to.c_str(), level, info);
+}
+BOOL WINAPI GetAttrExADetour(LPCSTR name, GET_FILEEX_INFO_LEVELS level, LPVOID info) {
+    const std::wstring to = RedirectA(name);
+    return to.empty() ? _origAttrExA(name, level, info) : _origAttrExW(to.c_str(), level, info);
 }
 
 void CleanCache() {
@@ -218,8 +246,17 @@ bool Install(const std::wstring& dllDir) {
                                               reinterpret_cast<void**>(&_origW));
     const bool okA = a && core::hook::Install("CreateFileA", a, reinterpret_cast<void*>(&CreateFileADetour),
                                               reinterpret_cast<void**>(&_origA));
-    MC_LOG_INFO("menu: archive redirect %s (CreateFileW %d, CreateFileA %d), cache %s", okW && okA ? "installed" : "INCOMPLETE",
-                okW, okA, Narrow(_cacheDir).c_str());
+    auto hook = [&](const char* name, void* detour, void** orig) {
+        void* t = kb ? reinterpret_cast<void*>(GetProcAddress(kb, name)) : nullptr;
+        return t && core::hook::Install(name, t, detour, orig);
+    };
+    // attribute queries: only matter if the game asks for an archive's size by name; failures are not fatal
+    bool attrs = hook("GetFileAttributesW", reinterpret_cast<void*>(&GetAttrWDetour), reinterpret_cast<void**>(&_origAttrW));
+    attrs &= hook("GetFileAttributesA", reinterpret_cast<void*>(&GetAttrADetour), reinterpret_cast<void**>(&_origAttrA));
+    attrs &= hook("GetFileAttributesExW", reinterpret_cast<void*>(&GetAttrExWDetour), reinterpret_cast<void**>(&_origAttrExW));
+    attrs &= hook("GetFileAttributesExA", reinterpret_cast<void*>(&GetAttrExADetour), reinterpret_cast<void**>(&_origAttrExA));
+    MC_LOG_INFO("menu: archive redirect %s (CreateFileW %d, CreateFileA %d, attribute queries %d), cache %s",
+                okW && okA ? "installed" : "INCOMPLETE", okW, okA, attrs, Narrow(_cacheDir).c_str());
     return okW && okA;
 }
 
