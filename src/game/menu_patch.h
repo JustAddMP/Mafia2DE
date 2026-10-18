@@ -6,8 +6,10 @@
 //   main menu   a CO-OP entry after STORY opens a CO-OP page built like the game's EXTRAS page (title, list,
 //               footer) with HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS; Esc / B / BACK go back
 //   pause menu  a CO-OP entry after OPTIONS opens the same page built like the pause menu's OPTIONS page
-// No new resources are added: the CO-OP pages reuse two screen/layout pairs the retail game never opens
-// (main menu: MafiaLogo, pause menu: Cheats) and the menus' daemons get a "Coop" screen pointing at them.
+// The game drops a whole archive when any XML resource changes size, so nothing is added and every patched resource
+// keeps its exact size: the CO-OP entries are the menus' hidden debug entries (main menu: "DEBUG Load Chapter",
+// pause menu: cheats), the CO-OP pages are built into the debug screens they open (LoadMission, Cheats), and the
+// resources are padded back to size (docs/re-notes.md 4). The daemons are untouched.
 // The entries on the CO-OP pages do nothing yet (menu-only build).
 #include "game/sds.h"
 

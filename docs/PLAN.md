@@ -1,15 +1,15 @@
 # Plan - next steps
 
 Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-18
-(menu-only build, nothing tested in game yet). Read with `re-notes.md` (what we know about the game, all static so
-far) and `../README-dev.md` (build, launch, the test checklist).
+(menu-only build after its first test launch, `test-2026-10-18-menu-launch.md`). Read with `re-notes.md` (what we
+know about the game) and `../README-dev.md` (build, launch, the test checklist).
 
 ## Where we are
 
 | Phase | State |
 |---|---|
-| 1 Launcher, injection, Present hook | Built, not tested in game |
-| 2 Connection + co-op panels | CO-OP entries and pages in the game's own main and pause menus built (entries do nothing yet); core's overlay panels behind F8 as a fallback; no networking |
+| 1 Launcher, injection, Present hook | Works in game (2026-10-18), through the user's ReShade |
+| 2 Connection + co-op panels | Main menu CO-OP entry and page work in game and look like the game's own (entries do nothing yet); pause menu entry built, not reached in a test yet; core's overlay panels behind F8 as a fallback; no networking |
 | 3 Second player | Not started |
 | 4 Shared world | Not started |
 | 5 Polish, release | Not started |
@@ -34,19 +34,20 @@ far) and `../README-dev.md` (build, launch, the test checklist).
 Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until it worked in a test launch.
 
 ### A. Menus render in the game (phase 1 + 2, current work)
-- [ ] **Launcher and injection**: `Mafia2Coop.exe` finds the game through Steam (app 1030830, exe in `pc\`), starts
+- [x] **Launcher and injection**: `Mafia2Coop.exe` finds the game through Steam (app 1030830, exe in `pc\`), starts
   it suspended with `SteamAppId`, loads `mafia2coop.dll` by an early APC (fallback remote thread), logs to
   `logs\`. Gate: `logs\mafia2coop.log` shows `init: done`, the game reaches the main menu.
-- [ ] **Present hook and overlay over Mafia II DE** (D3D11 flip-model swapchain, with the user's ReShade dxgi.dll in
+- [x] **Present hook and overlay over Mafia II DE** (D3D11 flip-model swapchain, with the user's ReShade dxgi.dll in
   between): gate: `render: first frame via Present...` in the log, F7 status text draws.
 - [ ] **CO-OP entry in the main menu** (after STORY) opening the game-drawn CO-OP page (EXTRAS look: title CO-OP,
   HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS; BACK / Esc / B return), keyboard, mouse and pad
   navigation by the game itself. Gate: screenshot of our page next to the game's EXTRAS page - same fonts, colours,
-  highlight, footer, sounds.
+  highlight, footer, sounds. Status 2026-10-18: works with keyboard and mouse and matches EXTRAS (screenshots in the
+  test log); still to check: pad navigation and glyphs, the sounds (the test ran muted, no pad).
 - [ ] **CO-OP entry in the pause menu** (after OPTIONS) opening the same page in the pause OPTIONS look. Gate: as above
-  against the pause OPTIONS page.
+  against the pause OPTIONS page. Status: built (the hidden cheats entry), the archive loads; needs a loaded save.
 - [ ] **Overlay fallback**: F8 opens core's CO-OP panels (only for testing while the native pages are not working;
-  remove once they are).
+  remove once they are - the main menu's native page works since 2026-10-18; remove after the pause menu is checked).
 - [ ] **Input blocking for our overlay panels** (DirectInput, xinput1_4, GetAsyncKeyState, window messages). Only
   matters for the fallback and later for our own dialogs.
 
