@@ -2,6 +2,7 @@
 
 #include "game/bxml.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -11,33 +12,38 @@ namespace {
 
 using bxml::Node;
 
-constexpr char kCoopScreen[] = "Coop";  // the screen name the daemons get
 constexpr char kCoopLabel[] = "CO-OP";
+constexpr char kVisibleAlways[] = "\\u100";  // the visibility condition of the main menu's EXIT entry (shown on PC)
 
-// Main menu: entry after STORY, page = EXTRAS look, hosted in the unused MafiaLogo screen/layout pair.
+// The game checks every XML resource against a stored value that depends on the resource's byte size (found in the
+// first test launch: a same-size edit loads; one byte more anywhere in a resource - or a changed prefix word - and
+// the game drops the whole archive: black screen, no menus). So no resource may change its size and none is added:
+// the CO-OP entries reuse the menus' hidden debug entries (which already open screens of their own), the CO-OP pages
+// are built into those debug screens, and every patched resource is padded back to its original size.
+
+// Main menu: the hidden debug entry "DEBUG Load Chapter" (btnLoadMission, right after STORY, hidden by visibility
+// condition 145) becomes CO-OP; its screen LoadMission (only reachable from that entry) becomes the CO-OP page,
+// built from the EXTRAS page.
 constexpr char kMainScreen[] = "/config/gui/Screens/MainMenu/MainMenu";
 constexpr char kMainLayout[] = "/config/gui/ScreenLayouts/MainMenu";
-constexpr char kMainDaemon[] = "/config/gui/Daemons/MainMenu";
 constexpr char kMainList[] = "listboxMainMenu";
-constexpr char kMainAfter[] = "btnStory";
+constexpr char kMainEntry[] = "btnLoadMission";
 constexpr char kMainTplScreen[] = "/config/gui/Screens/MainMenu/Extras";
 constexpr char kMainTplLayout[] = "/config/gui/ScreenLayouts/Extras";
-constexpr char kMainHostScreen[] = "/config/gui/Screens/MainMenu/MafiaLogo";
-constexpr char kMainHostLayout[] = "/config/gui/ScreenLayouts/MafiaLogo";
-constexpr char kMainHostSource[] = "MainMenu/MafiaLogo";
-constexpr char kMainHostLayoutName[] = "MafiaLogo";
+constexpr char kMainHostScreen[] = "/config/gui/Screens/MainMenu/LoadMission";
+constexpr char kMainHostLayout[] = "/config/gui/ScreenLayouts/LoadMission";
+constexpr char kMainHostLayoutName[] = "LoadMission";
 
-// Pause menu: entry after OPTIONS, page = the pause menu's OPTIONS look, hosted in the debug Cheats pair.
+// Pause menu: the hidden cheats entry (btnCheats, right after OPTIONS, hidden by condition 130) becomes CO-OP; its
+// screen Cheats becomes the CO-OP page, built from the pause menu's OPTIONS page.
 constexpr char kPauseScreen[] = "/config/gui/Screens/GameMenu/GameMenu";
 constexpr char kPauseLayout[] = "/config/gui/ScreenLayouts/GameMenu";
-constexpr char kPauseDaemon[] = "/config/gui/Daemons/GameMenu";
 constexpr char kPauseList[] = "listboxGameMenu";
-constexpr char kPauseAfter[] = "btnOptions";
+constexpr char kPauseEntry[] = "btnCheats";
 constexpr char kPauseTplScreen[] = "/config/gui/Screens/GameMenu/Options";
 constexpr char kPauseTplLayout[] = "/config/gui/ScreenLayouts/OptionsGameMenu";  // in gui-main.sds
 constexpr char kPauseHostScreen[] = "/config/gui/Screens/GameMenu/Cheats";
 constexpr char kPauseHostLayout[] = "/config/gui/ScreenLayouts/Cheats";
-constexpr char kPauseHostSource[] = "GameMenu/Cheats";
 constexpr char kPauseHostLayoutName[] = "Cheats";
 
 struct Ctx {
@@ -108,35 +114,18 @@ std::unique_ptr<Node> MakeButton(const Node& tpl, const std::string& name, const
     return b;
 }
 
-double PosY(Node* widget) {
-    Node* props = widget->Child("properties");
-    return AttrNum(props ? props->Child("position") : nullptr, "y");
-}
-void SetPosY(Node* widget, double y) {
-    if (Node* props = widget->Child("properties"))
-        if (Node* p = props->Child("position")) p->SetAttr("y", Fmt4(y));
-}
 double RowHeight(Node* widget) {
     Node* props = widget->Child("properties");
     const double h = AttrNum(props ? props->Child("size") : nullptr, "y", 0.062);
     return h > 0.01 ? h : 0.062;
 }
 
-// The screen-side widget entry of a list button: hovering selects it (as the game's own entries do); `use` opens a
-// screen when given.
-std::unique_ptr<Node> MakeScreenWidget(const std::string& name, const std::string& list, const std::string& openScreen) {
+// The screen-side widget entry of a list button: hovering selects it (as the game's own entries do).
+std::unique_ptr<Node> MakeScreenWidget(const std::string& name, const std::string& list) {
     auto w = std::make_unique<Node>();
     w->name = "widget";
     w->SetAttr("name", name);
-    Node& ev = w->Add("events");
-    if (!openScreen.empty()) {
-        Node& use = ev.Add("use");
-        use.SetAttr("action", "screen.activate");
-        use.SetAttr("operation", "replace");
-        use.hasText = true;
-        use.text = openScreen;
-    }
-    Node& co = ev.Add("cursor-over");
+    Node& co = w->Add("events").Add("cursor-over");
     co.SetAttr("action", "container.selectItem");
     co.SetAttr("widget", list);
     co.hasText = true;
@@ -162,56 +151,209 @@ void Store(Ctx& c, Res& r) {
     c.res.dumps.emplace_back(r.res->sourceName, bxml::ToText(*r.doc.root));
 }
 
-// Adds our entry to a menu: the layout gets a button cloned from `after` (inserted below it, the rows under it move
-// down one row), the screen gets its events (open the "Coop" screen).
-bool AddEntry(Ctx& c, Res& screen, Res& layout, const char* list, const char* after) {
+bool ReadDoc(Ctx& c, const sds::Archive& a, const char* name, bxml::Document& out) {
+    const sds::Resource* r = nullptr;
+    for (const auto& x : a.resources)
+        if (x.sourceName == name) r = &x;
+    if (!r) return c.Fail(std::string("resource ") + name + " not found");
+    std::string err;
+    if (!bxml::Read(r->data, out, &err)) return c.Fail(std::string(name) + ": " + err);
+    return true;
+}
+
+// ---- keeping every resource's size ----
+
+size_t Size(const Res& r) { return bxml::Write(r.doc).size(); }
+
+// Layout padding. Two things the game reads without changing what it shows:
+//  - plain decimal numbers ("0.0000", "-1.0000") written with more or fewer trailing zeros - the same value;
+//  - invisible empty group boxes (the game's own layouts have hidden group boxes, e.g. gbPromoHighlight).
+// (Label literals are NOT slack: a non-empty text="..." is drawn instead of the textid string - seen in game.)
+bool IsDecimal(const std::string& v) {
+    size_t i = v.size() && v[0] == '-' ? 1 : 0;
+    const size_t dot = v.find('.');
+    if (dot == std::string::npos || dot == i || dot + 1 >= v.size()) return false;
+    for (size_t k = i; k < v.size(); ++k)
+        if (k != dot && (v[k] < '0' || v[k] > '9')) return false;
+    return true;
+}
+
+struct NumAttr {
+    Node* node;
+    size_t attr;   // index into node->attrs
+    size_t base;   // the value's length as the game wrote it
+};
+
+void CollectNumbers(Node* n, std::vector<NumAttr>& out) {
+    for (size_t i = 0; i < n->attrs.size(); ++i)
+        if (IsDecimal(n->attrs[i].second)) out.push_back({n, i, n->attrs[i].second.size()});
+    for (auto& c : n->children) CollectNumbers(c.get(), out);
+}
+
+constexpr size_t kMaxExtraZeros = 6;  // "0.0000" -> at most "0.0000000000": short enough for any number parser
+
+std::unique_ptr<Node> MakeFiller(size_t i) {
+    auto w = std::make_unique<Node>();
+    w->name = "widget";
+    w->SetAttr("name", "coopPad" + std::to_string(i));
+    w->SetAttr("type", "groupbox");
+    Node& props = w->Add("properties");
+    Node& cd = props.Add("commondata");
+    cd.SetAttr("disabled", "true");
+    cd.SetAttr("visible", "false");
+    cd.SetAttr("tabIndex", "1");
+    props.Add("name");
+    Node& pos = props.Add("position");
+    for (const char* k : {"x", "y", "xOrigin", "yOrigin", "rotation"}) pos.SetAttr(k, "0.0000");
+    Node& size = props.Add("size");
+    size.SetAttr("x", "0.0000");
+    size.SetAttr("y", "0.0000");
+    return w;
+}
+
+// Brings a layout back to exactly `target` bytes: trailing zeros of its numbers off (too big) or on (too small),
+// invisible filler group boxes for large gaps.
+bool FitLayout(Ctx& c, Res& r, size_t target) {
+    Node* top = r.doc.root->Child("widget");
+    if (!top) return c.Fail(r.res->sourceName + ": no root widget");
+    // too big: drop trailing zeros ("0.0000" -> "0.0")
+    std::vector<NumAttr> nums;
+    CollectNumbers(r.doc.root.get(), nums);
+    for (auto& na : nums) {
+        if (Size(r) <= target) break;
+        std::string& v = na.node->attrs[na.attr].second;
+        while (v.size() > v.find('.') + 2 && v.back() == '0') v.pop_back();
+    }
+    // much too small: invisible fillers
+    size_t fillers = 0;
+    Node* kids = top->Child("children");
+    if (!kids) kids = &top->Add("children");
+    nums.clear();
+    CollectNumbers(r.doc.root.get(), nums);
+    while (Size(r) < target && target - Size(r) > nums.size() * kMaxExtraZeros / 2) {
+        kids->children.push_back(MakeFiller(fillers++));
+        if (Size(r) > target) {  // one filler too many: take it back
+            kids->children.pop_back();
+            --fillers;
+            break;
+        }
+    }
+    nums.clear();
+    CollectNumbers(r.doc.root.get(), nums);
+    // fine: one trailing zero at a time (each is one byte; layouts have no aligned element texts)
+    for (size_t round = 0; round < kMaxExtraZeros + 4 && Size(r) < target; ++round)
+        for (auto& na : nums) {
+            const size_t now = Size(r);
+            if (now >= target) break;
+            std::string& v = na.node->attrs[na.attr].second;
+            if (v.size() < na.base + kMaxExtraZeros) v.push_back('0');
+        }
+    if (Size(r) == target) {
+        if (fillers) c.Log(r.res->sourceName + ": " + std::to_string(fillers) + " invisible filler(s) to keep its size");
+        return true;
+    }
+    return c.Fail(r.res->sourceName + ": cannot keep its size (" + std::to_string(Size(r)) + " vs " +
+                  std::to_string(target) + " bytes)");
+}
+
+// Screen padding: no-op events at the very end of the tree (the last widget's events) - removing a menu variable
+// that does not exist, as the game's own screens remove theirs. Nothing follows them in the string table, so the
+// last one's name can take up the remaining bytes exactly. Names stay short (several events for a large gap).
+bool FitScreen(Ctx& c, Res& r, size_t target) {
+    if (Size(r) == target) return true;
+    Node* config = r.doc.root->Child("config");
+    Node* widgets = config ? config->Child("widgets") : nullptr;
+    Node* last = widgets && !widgets->children.empty() ? widgets->children.back().get() : nullptr;
+    if (!last) return c.Fail(r.res->sourceName + ": no widget to pad");
+    Node* ev = last->Child("events");
+    if (!ev) ev = &last->Add("events");
+    constexpr size_t kMaxName = 24;
+    for (int i = 0; i < 4096 && Size(r) < target; ++i) {
+        Node& pad = ev->Add("hide");
+        pad.SetAttr("action", "menu.removeVariable");
+        const std::string base = "CoopPad" + std::to_string(i);
+        pad.SetAttr("name", base);
+        const size_t now = Size(r);
+        if (now > target) {
+            ev->children.pop_back();
+            break;
+        }
+        if (target - now <= kMaxName - base.size()) {
+            std::string v = base;
+            v.resize(base.size() + (target - now), 'x');
+            pad.SetAttr("name", v);
+            break;
+        }
+    }
+    // what is left (less than one more event): a few more characters on each event's name
+    for (int round = 0; round < 64 && Size(r) < target; ++round)
+        for (auto& e : ev->children) {
+            const std::string* nm = e->Attr("name");
+            if (!nm || nm->rfind("CoopPad", 0) != 0 || Size(r) >= target) continue;
+            if (nm->size() < 160) e->SetAttr("name", *nm + "x");
+        }
+    if (Size(r) == target) return true;
+    return c.Fail(r.res->sourceName + ": cannot keep its size (" + std::to_string(Size(r)) + " vs " +
+                  std::to_string(target) + " bytes)");
+}
+
+// ---- the entries and pages ----
+
+// Turns a hidden debug entry of a menu into CO-OP: the layout's button gets our literal label (the game's own
+// literal labels use textid 0) and the tooltip of the entry above it; in the screen its visibility condition becomes
+// the one the game uses for entries that are always shown. Its `use` (open its own screen) stays.
+bool RepurposeEntry(Ctx& c, Res& screen, Res& layout, const char* list, const char* entry) {
+    const size_t screenSize = screen.res->data.size(), layoutSize = layout.res->data.size();
     Node* lb = Widget(layout.doc.root.get(), list);
     Node* items = lb ? lb->Child("items") : nullptr;
-    Node* tpl = items ? Widget(items, after) : nullptr;
-    if (!tpl) return c.Fail(std::string("layout: ") + list + " / " + after + " not found");
-    if (Widget(items, "btnCoop")) return c.Fail("layout already has btnCoop");
-    const double row = RowHeight(tpl), y = PosY(tpl) + row;
-    const size_t at = IndexOf(items, tpl) + 1;
-    for (size_t i = at; i < items->children.size(); ++i) {
-        Node* w = items->children[i].get();
-        if (w->name == "widget" && PosY(w) >= y - 0.0001) SetPosY(w, PosY(w) + row);
+    Node* btn = items ? Widget(items, entry) : nullptr;
+    Node* props = btn ? btn->Child("properties") : nullptr;
+    Node* text = props ? props->Child("text") : nullptr;
+    if (!text) return c.Fail(std::string("layout: ") + list + " / " + entry + " not found");
+    text->SetAttr("text", kCoopLabel);
+    text->SetAttr("textid", "0");
+    const size_t at = IndexOf(items, btn);
+    if (at > 0 && at < items->children.size())
+        if (Node* above = items->children[at - 1]->Child("properties"))
+            if (Node* tip = above->Child("tooltip"))
+                if (Node* own = props->Child("tooltip")) own->attrs = tip->attrs;
+    if (Node* cd = props->Child("commondata")) {
+        cd->SetAttr("disabled", "false");
+        cd->SetAttr("visible", "true");
     }
-    auto button = MakeButton(*tpl, "btnCoop", kCoopLabel, y);
-    if (Node* props = button->Child("properties"))  // its own tab index (the template's + 1)
-        if (Node* cd = props->Child("commondata"))
-            cd->SetAttr("tabIndex", std::to_string(static_cast<int>(AttrNum(cd, "tabIndex")) + 1));
-    Insert(items, at, std::move(button));
 
     Node* config = screen.doc.root->Child("config");
     Node* widgets = config ? config->Child("widgets") : nullptr;
-    Node* sAfter = widgets ? Widget(widgets, after) : nullptr;
-    if (!sAfter) return c.Fail(std::string("screen: widget ") + after + " not found");
-    Insert(widgets, IndexOf(widgets, sAfter) + 1, MakeScreenWidget("btnCoop", list, kCoopScreen));
-    c.Log(std::string("entry ") + kCoopLabel + " added after " + after + " in " + list + " (row " + Fmt4(y) + ")");
+    Node* sw = widgets ? Widget(widgets, entry) : nullptr;
+    Node* ev = sw ? sw->Child("events") : nullptr;
+    if (!ev) return c.Fail(std::string("screen: widget ") + entry + " not found");
+    int vis = 0;
+    for (auto& e : ev->children) {
+        const std::string* action = e->Attr("action");
+        if (action && *action == "menu.visibility" && e->hasText) {
+            e->text = kVisibleAlways;
+            ++vis;
+        }
+    }
+    if (!vis) return c.Fail(std::string("screen: ") + entry + " has no visibility condition");
+    if (!FitLayout(c, layout, layoutSize) || !FitScreen(c, screen, screenSize)) return false;
+    c.Log(std::string("entry ") + kCoopLabel + ": " + entry + " in " + list + " (" + std::to_string(vis) +
+          " visibility condition(s) -> always shown)");
     return true;
 }
 
-bool AddDaemonScreen(Ctx& c, Res& daemon, const char* source) {
-    Node* config = daemon.doc.root->Child("config");
-    Node* screens = config ? config->Child("screens") : nullptr;
-    if (!screens) return c.Fail("daemon has no <screens>");
-    if (screens->FindByAttr("screen", "name", kCoopScreen)) return c.Fail("daemon already has a Coop screen");
-    Node& s = screens->Add("screen");
-    s.SetAttr("name", kCoopScreen);
-    s.SetAttr("source", source);
-    c.Log(std::string("daemon ") + daemon.res->sourceName + ": screen Coop -> " + source);
-    return true;
-}
-
-// Builds the CO-OP page into the host pair from a template page (a screen + its layout): same look; the title says
-// CO-OP; the list holds our entries; Esc / B / the footer's BACK go back to the menu.
+// Builds the CO-OP page into a host screen/layout pair from a template page (a screen + its layout): same look; the
+// title says CO-OP; the list holds our entries; Esc / B / the footer's BACK go back to the menu. Both host resources
+// keep their size; the host layout keeps its root widget name.
 bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
                Res& hostLayout, const char* hostLayoutName) {
+    const size_t screenSize = hostScreen.res->data.size(), layoutSize = hostLayout.res->data.size();
     // ---- layout ----
     auto layout = tplLayout.root->Clone();
     Node* top = layout->Child("widget");
     if (!top) return c.Fail("template layout has no root widget");
-    top->SetAttr("name", "layoutCoop");
+    if (Node* hostTop = hostLayout.doc.root->Child("widget"))
+        if (const std::string* nm = hostTop->Attr("name")) top->SetAttr("name", *nm);
     Node* title = FindIf(layout.get(), [](Node* n) {
         const std::string* nm = n->Attr("name");
         const std::string* ty = n->Attr("type");
@@ -265,7 +407,7 @@ bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tp
         else ++i;
     }
     size_t at = 0;
-    for (const auto& nm : names) Insert(widgets, at++, MakeScreenWidget(nm, list, ""));
+    for (const auto& nm : names) Insert(widgets, at++, MakeScreenWidget(nm, list));
     if (Node* back = Widget(widgets, "btnBack")) {
         Node* ev = back->Child("events");
         if (!ev) ev = &back->Add("events");
@@ -277,20 +419,25 @@ bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tp
         }
     }
 
-    hostLayout.doc.root = std::move(layout);  // the host resources keep their own prefix (name, hash)
+    hostLayout.doc.root = std::move(layout);  // the host resources keep their own prefix (name, check value)
     hostScreen.doc.root = std::move(screen);
+    // The host screen may be smaller than the template's (main menu: LoadMission 3142 bytes, EXTRAS 5937): drop
+    // what the page can do without until it fits - remembering the focus, then the blend type of the fades.
+    const size_t padCost = 160;  // about what the pad event FitScreen adds costs
+    Node* cfg = hostScreen.doc.root->Child("config");
+    Node* st = cfg ? cfg->Child("settings") : nullptr;
+    if (st && Size(hostScreen) + padCost > screenSize) {
+        RemoveChildren(st, "remember-focus");
+        c.Log(hostScreen.res->sourceName + ": no remember-focus (size)");
+    }
+    if (st && Size(hostScreen) + padCost > screenSize) {
+        for (const char* f : {"fade-in", "fade-out"})
+            if (Node* n = st->Child(f)) n->attrs.clear();
+        c.Log(hostScreen.res->sourceName + ": plain fades (size)");
+    }
+    if (!FitLayout(c, hostLayout, layoutSize) || !FitScreen(c, hostScreen, screenSize)) return false;
     c.Log(std::string("page built in ") + hostScreen.res->sourceName + " / " + hostLayout.res->sourceName + " (" +
           std::to_string(entries.size()) + " entries, list " + list + ")");
-    return true;
-}
-
-bool ReadDoc(Ctx& c, const sds::Archive& a, const char* name, bxml::Document& out) {
-    const sds::Resource* r = nullptr;
-    for (const auto& x : a.resources)
-        if (x.sourceName == name) r = &x;
-    if (!r) return c.Fail(std::string("resource ") + name + " not found");
-    std::string err;
-    if (!bxml::Read(r->data, out, &err)) return c.Fail(std::string(name) + ": " + err);
     return true;
 }
 
@@ -304,18 +451,15 @@ const std::vector<std::string>& CoopEntries() {
 Result PatchGuiMain(sds::Archive& a) {
     Result res;
     Ctx c{res};
-    Res screen, layout, daemon, pauseDaemon, hostScreen, hostLayout;
+    Res screen, layout, hostScreen, hostLayout;
     bxml::Document tplScreen, tplLayout;
-    if (!Load(c, a, kMainScreen, screen) || !Load(c, a, kMainLayout, layout) || !Load(c, a, kMainDaemon, daemon) ||
-        !Load(c, a, kPauseDaemon, pauseDaemon) || !Load(c, a, kMainHostScreen, hostScreen) ||
-        !Load(c, a, kMainHostLayout, hostLayout) || !ReadDoc(c, a, kMainTplScreen, tplScreen) ||
-        !ReadDoc(c, a, kMainTplLayout, tplLayout))
+    if (!Load(c, a, kMainScreen, screen) || !Load(c, a, kMainLayout, layout) ||
+        !Load(c, a, kMainHostScreen, hostScreen) || !Load(c, a, kMainHostLayout, hostLayout) ||
+        !ReadDoc(c, a, kMainTplScreen, tplScreen) || !ReadDoc(c, a, kMainTplLayout, tplLayout))
         return res;
-    if (!AddEntry(c, screen, layout, kMainList, kMainAfter)) return res;
-    if (!AddDaemonScreen(c, daemon, kMainHostSource)) return res;
-    if (!AddDaemonScreen(c, pauseDaemon, kPauseHostSource)) return res;
+    if (!RepurposeEntry(c, screen, layout, kMainList, kMainEntry)) return res;
     if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName)) return res;
-    for (Res* r : {&screen, &layout, &daemon, &pauseDaemon, &hostScreen, &hostLayout}) Store(c, *r);
+    for (Res* r : {&screen, &layout, &hostScreen, &hostLayout}) Store(c, *r);
     res.ok = true;
     return res;
 }
@@ -329,7 +473,7 @@ Result PatchGui(sds::Archive& a, const sds::Archive& guiMain) {
         !Load(c, a, kPauseHostScreen, hostScreen) || !Load(c, a, kPauseHostLayout, hostLayout) ||
         !ReadDoc(c, a, kPauseTplScreen, tplScreen) || !ReadDoc(c, guiMain, kPauseTplLayout, tplLayout))
         return res;
-    if (!AddEntry(c, screen, layout, kPauseList, kPauseAfter)) return res;
+    if (!RepurposeEntry(c, screen, layout, kPauseList, kPauseEntry)) return res;
     if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kPauseHostLayoutName)) return res;
     for (Res* r : {&screen, &layout, &hostScreen, &hostLayout}) Store(c, *r);
     res.ok = true;

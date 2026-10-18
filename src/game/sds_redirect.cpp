@@ -32,7 +32,8 @@ GetAttrExAFn _origAttrExA = nullptr;
 
 std::wstring _cacheDir;
 thread_local bool _busy = false;  // our own file access while building (never redirected)
-std::atomic<int> _sdsOpensLogged{0};
+std::mutex _logMutex;
+std::vector<std::wstring> _sdsOpensLogged;  // each archive path once (the game opens each a few times per probe)
 
 enum class Kind { None, GuiMain, Gui };
 
@@ -102,6 +103,15 @@ void SaveReport(const std::wstring& name, const menu_patch::Result& r) {
     WriteFileAll(_cacheDir + L"\\" + name, text.data(), text.size());
 }
 
+bool Exists(const std::wstring& path) {
+    const std::wstring full = FullPath(path);
+    if (_origAttrW) return _origAttrW(full.c_str()) != INVALID_FILE_ATTRIBUTES;
+    _busy = true;
+    const bool ok = GetFileAttributesW(full.c_str()) != INVALID_FILE_ATTRIBUTES;
+    _busy = false;
+    return ok;
+}
+
 // Builds the patched copy of `requested` (GuiMain or Gui) and returns its path, or "" (logged) on any failure.
 std::wstring Build(Kind kind, const std::wstring& requested) {
     const std::wstring original = FullPath(requested);
@@ -161,12 +171,21 @@ std::wstring Redirect(const std::wstring& path) {
     const std::wstring lower = Lower(path);
     if (!EndsWith(lower, L".sds")) return {};
     const Kind kind = Classify(L"\\" + lower);  // also a relative "sds/gui/..."
-    if (_sdsOpensLogged < 40) {
-        ++_sdsOpensLogged;
-        MC_LOG_INFO("sds: game opens %s", Narrow(path).c_str());
+    {
+        std::lock_guard lock(_logMutex);
+        bool seen = false;
+        for (const auto& p : _sdsOpensLogged) seen |= p == lower;
+        if (!seen && _sdsOpensLogged.size() < 200) {
+            _sdsOpensLogged.push_back(lower);
+            MC_LOG_INFO("sds: game opens %s", Narrow(path).c_str());
+        }
     }
     if (kind == Kind::None) return {};
     if (lower.find(Lower(_cacheDir)) == 0) return {};  // our own copy
+    // The game looks for each archive in a search order (Documents\My Games\...\Data\sds, EDIT\sds, pc\sds_<lang>,
+    // pc\sds) and takes the first that exists: the missing ones must stay missing, so only an existing file is
+    // patched and redirected.
+    if (!Exists(path)) return {};
     std::lock_guard lock(_mutex);
     Built& b = _built[static_cast<int>(kind)];
     if (!b.tried) {

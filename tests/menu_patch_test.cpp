@@ -3,8 +3,11 @@
 //   - bxml: a made-up binary XML tree written and read back (names, texts, attributes, nesting);
 //   - sds: a made-up archive written (raw blocks) and read back;
 //   - the real thing, when the game is installed (read-only): gui-main.sds and gui.sds are read, patched and
-//     written; the patched archives must read back, contain the CO-OP entry in the main and pause menus, the Coop
-//     screens in both daemons, the two CO-OP pages with our five entries, and leave every other resource unchanged.
+//     written; the patched archives must read back, have the CO-OP entry in the main menu (the former hidden debug
+//     entry after STORY) and the pause menu (the former hidden cheats entry after OPTIONS), the two CO-OP pages with
+//     our five entries in the debug screens those entries open, every changed resource exactly as big as before with
+//     its prefix word unchanged (the game drops the whole archive otherwise - seen in game), and every other
+//     resource byte-identical.
 //     The patched archives and reports go to out\menu_patch\ for inspection. Game folder: env M2_GAME_DIR (the
 //     folder that holds pc\), else the default Steam library paths; skipped (not failed) when not found.
 // Exits non-zero on any failure.
@@ -246,35 +249,61 @@ void TestGameFiles(const std::wstring& outDir) {
         WriteAll(outDir + (rp == &r1 ? L"\\gui-main.patch.txt" : L"\\gui.patch.txt"), t.data(), t.size());
     }
 
+    // main menu: the hidden debug entry after STORY is now CO-OP, always shown, still opening its own screen
     const std::string mm = Text(backMain, "/config/gui/ScreenLayouts/MainMenu");
-    Check(Has(mm, "<widget name=\"btnCoop\" type=\"button\">") && Has(mm, "<text text=\"CO-OP\" textid=\"0\"/>"),
-          "main menu layout: btnCoop with the literal label CO-OP");
-    Check(mm.find("name=\"btnStory\"") < mm.find("name=\"btnCoop\"") &&
-              mm.find("name=\"btnCoop\"") < mm.find("name=\"btnLoadMission\""),
-          "main menu layout: CO-OP right after STORY");
+    const size_t story = mm.find("name=\"btnStory\""), coop = mm.find("name=\"btnLoadMission\"");
+    Check(story < coop && coop != std::string::npos && Has(mm.substr(coop, 600), "<text text=\"CO-OP\" textid=\"0\"/>"),
+          "main menu layout: CO-OP (literal label) right after STORY");
+    Check(!Has(mm, "DEBUG Load Chapter"), "main menu layout: the debug label is gone");
     const std::string ms = Text(backMain, "/config/gui/Screens/MainMenu/MainMenu");
-    Check(Has(ms, "<use action=\"screen.activate\" operation=\"replace\">Coop</use>"), "main menu screen: CO-OP opens the Coop screen");
-    Check(Has(Text(backMain, "/config/gui/Daemons/MainMenu"), "<screen name=\"Coop\" source=\"MainMenu/MafiaLogo\"/>"),
-          "main menu daemon: Coop screen");
-    Check(Has(Text(backMain, "/config/gui/Daemons/GameMenu"), "<screen name=\"Coop\" source=\"GameMenu/Cheats\"/>"),
-          "pause menu daemon: Coop screen");
-    const std::string page = Text(backMain, "/config/gui/ScreenLayouts/MafiaLogo");
+    Check(Has(ms, "<use action=\"screen.activate\" operation=\"replace\">LoadMission</use>") && !Has(ms, ">\\u145<") &&
+              Count(ms, "<activate action=\"menu.visibility\">\\u100</activate>") >= 2,
+          "main menu screen: CO-OP always shown, opens the LoadMission screen", ms);
+    const std::string page = Text(backMain, "/config/gui/ScreenLayouts/LoadMission");
     bool all = true;
     for (const auto& e : menu_patch::CoopEntries()) all = all && Has(page, "<text text=\"" + e + "\" textid=\"0\"/>");
     Check(all && Has(page, "listboxExtras") && Count(page, "name=\"btnCoop") == 5, "main CO-OP page: the five entries in the EXTRAS list style");
-    Check(Has(page, "<text text=\"CO-OP\" textid=\"0\"/>"), "main CO-OP page: title CO-OP");
-    const std::string pageScreen = Text(backMain, "/config/gui/Screens/MainMenu/MafiaLogo");
-    Check(Has(pageScreen, "<definition>\\sMafiaLogo</definition>") && Has(pageScreen, "<cancel action=\"screen.back\"/>") &&
-              Has(pageScreen, "<focus>btnCoop0</focus>"),
+    Check(Has(page, "<text text=\"CO-OP\" textid=\"0\"/>") && Has(page, "<widget name=\"layoutLoadMission\""),
+          "main CO-OP page: title CO-OP, the host's root widget name");
+    const std::string pageScreen = Text(backMain, "/config/gui/Screens/MainMenu/LoadMission");
+    Check(Has(pageScreen, "<definition>\\sLoadMission</definition>") && Has(pageScreen, "<cancel action=\"screen.back\"/>") &&
+              Has(pageScreen, "<focus>btnCoop0</focus>") && !Has(pageScreen, "menu.mission"),
           "main CO-OP page screen: its layout, Esc = back, focus on the first entry", pageScreen);
+
+    // pause menu: the hidden cheats entry after OPTIONS is now CO-OP
     const std::string gm = Text(backGui, "/config/gui/ScreenLayouts/GameMenu");
-    Check(Has(gm, "name=\"btnCoop\"") && gm.find("name=\"btnOptions\"") < gm.find("name=\"btnCoop\""),
-          "pause menu layout: CO-OP after OPTIONS");
-    Check(Has(Text(backGui, "/config/gui/Screens/GameMenu/GameMenu"), ">Coop</use>"), "pause menu screen: CO-OP opens the Coop screen");
+    const size_t opt = gm.find("name=\"btnOptions\""), cheats = gm.find("name=\"btnCheats\"");
+    Check(opt < cheats && cheats != std::string::npos && Has(gm.substr(cheats, 600), "<text text=\"CO-OP\" textid=\"0\"/>"),
+          "pause menu layout: CO-OP right after OPTIONS");
+    const std::string gs = Text(backGui, "/config/gui/Screens/GameMenu/GameMenu");
+    Check(Has(gs, ">Cheats</use>") && !Has(gs, ">\\u130<"), "pause menu screen: CO-OP always shown, opens the Cheats screen");
     const std::string pp = Text(backGui, "/config/gui/ScreenLayouts/Cheats");
     Check(Has(pp, "listboxOptions") && Count(pp, "name=\"btnCoop") == 5, "pause CO-OP page: the five entries in the OPTIONS list style");
     const std::string ps = Text(backGui, "/config/gui/Screens/GameMenu/Cheats");
-    Check(Has(ps, "<definition>\\sCheats</definition>") && !Has(ps, "options.back"), "pause CO-OP page screen: its layout, plain back", ps);
+    Check(Has(ps, "<definition>\\sCheats</definition>") && !Has(ps, "options.back") && !Has(ps, "game.cheat"),
+          "pause CO-OP page screen: its layout, plain back, no cheats", ps);
+
+    // the game's check: a changed resource keeps its exact size and its prefix word
+    auto sameShape = [](const sds::Archive& orig, const sds::Archive& back, const std::vector<std::string>& changed,
+                        std::string& bad) {
+        for (size_t i = 0; i < orig.resources.size() && i < back.resources.size(); ++i)
+            for (const auto& c : changed)
+                if (orig.resources[i].sourceName == c &&
+                    (orig.resources[i].data.size() != back.resources[i].data.size() ||
+                     std::memcmp(orig.resources[i].data.data(), back.resources[i].data.data(), 4) != 0))
+                    bad += c + " (" + std::to_string(orig.resources[i].data.size()) + " -> " +
+                           std::to_string(back.resources[i].data.size()) + ") ";
+        return bad.empty();
+    };
+    const std::vector<std::string> changedMain = {"/config/gui/Screens/MainMenu/MainMenu", "/config/gui/ScreenLayouts/MainMenu",
+                                                  "/config/gui/Screens/MainMenu/LoadMission", "/config/gui/ScreenLayouts/LoadMission"};
+    const std::vector<std::string> changedGui = {"/config/gui/Screens/GameMenu/GameMenu", "/config/gui/ScreenLayouts/GameMenu",
+                                                 "/config/gui/Screens/GameMenu/Cheats", "/config/gui/ScreenLayouts/Cheats"};
+    std::string bad;
+    Check(sameShape(mainOrig, backMain, changedMain, bad) && sameShape(gOrig, backGui, changedGui, bad),
+          "both: every changed resource keeps its size and prefix word", bad);
+    Check(backMain.resources.size() == mainOrig.resources.size() && backGui.resources.size() == gOrig.resources.size(),
+          "both: no resource added or removed");
 
     // everything else unchanged
     auto unchanged = [](const sds::Archive& orig, const sds::Archive& back, const std::vector<std::string>& changed) {
@@ -286,14 +315,8 @@ void TestGameFiles(const std::wstring& outDir) {
         }
         return true;
     };
-    Check(unchanged(mainOrig, backMain,
-                    {"/config/gui/Screens/MainMenu/MainMenu", "/config/gui/ScreenLayouts/MainMenu", "/config/gui/Daemons/MainMenu",
-                     "/config/gui/Daemons/GameMenu", "/config/gui/Screens/MainMenu/MafiaLogo", "/config/gui/ScreenLayouts/MafiaLogo"}),
-          "gui-main.sds: every other resource is byte-identical");
-    Check(unchanged(gOrig, backGui,
-                    {"/config/gui/Screens/GameMenu/GameMenu", "/config/gui/ScreenLayouts/GameMenu",
-                     "/config/gui/Screens/GameMenu/Cheats", "/config/gui/ScreenLayouts/Cheats"}),
-          "gui.sds: every other resource is byte-identical");
+    Check(unchanged(mainOrig, backMain, changedMain), "gui-main.sds: every other resource is byte-identical (daemons too)");
+    Check(unchanged(gOrig, backGui, changedGui), "gui.sds: every other resource is byte-identical");
     Check(backMain.index == mainOrig.index && backGui.index == gOrig.index, "both: the resource index text is unchanged");
 }
 
