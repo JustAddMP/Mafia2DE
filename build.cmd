@@ -46,6 +46,10 @@ echo [build] lib m2_ui.lib
 lib /NOLOGO /OUT:"%OBJ%\m2_ui.lib" "%OBJ%\minhook\*.obj" "%OBJ%\core\*.obj" "%OBJ%\render\*.obj" ^
   "%OBJ%\dll\coop.obj" "%OBJ%\dll\coop_ui.obj" "%OBJ%\dll\mod.obj" "%OBJ%\dll\ui_input.obj"
 if errorlevel 1 ( echo [build] ERROR: lib m2_ui.lib failed & goto :fail )
+rem m2_game.lib: the game-free parts of src\game the tests use (archives, binary XML, inflate, the menu patch)
+lib /NOLOGO /OUT:"%OBJ%\m2_game.lib" "%OBJ%\game\sds.obj" "%OBJ%\game\bxml.obj" "%OBJ%\game\inflate.obj" ^
+  "%OBJ%\game\menu_patch.obj"
+if errorlevel 1 ( echo [build] ERROR: lib m2_game.lib failed & goto :fail )
 
 echo [build] link mafia2coop.dll
 link %MC_LDFLAGS% /DLL /OUT:"%OUT%\mafia2coop.dll" /PDB:"%OUT%\mafia2coop.pdb" /IMPLIB:"%OBJ%\mafia2coop.lib" ^
@@ -63,7 +67,7 @@ for %%f in ("%ROOT%\tests\*.cpp") do (
   cl %CXXFLAGS% /Fd"%OBJ%\tests\vc.pdb" /Fo"%OBJ%\tests\%%~nf.obj" "%%f"
   if errorlevel 1 ( echo [build] ERROR: compiling %%~nxf failed & goto :fail )
   link %MC_LDFLAGS% /SUBSYSTEM:CONSOLE /OUT:"%OUT%\%%~nf.exe" /PDB:"%OUT%\%%~nf.pdb" "%OBJ%\tests\%%~nf.obj" ^
-    "%OBJ%\game\game_info.obj" "%OBJ%\m2_ui.lib" %MC_SYSLIBS%
+    "%OBJ%\game\game_info.obj" "%OBJ%\m2_game.lib" "%OBJ%\m2_ui.lib" %MC_SYSLIBS%
   if errorlevel 1 ( echo [build] ERROR: linking %%~nf.exe failed & goto :fail )
 )
 
