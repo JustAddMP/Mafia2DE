@@ -50,7 +50,7 @@ instance on one PC is a later item, docs/PLAN.md); `/multiinst` (Mafia DE's swit
 **The user's PC has a wrapper dxgi.dll**: `pc\dxgi.dll` is ReShade 6.8 with add-ons (`*.addon64`, a "DLSS 5"
 add-on that also creates a D3D12 device). Our Present hook takes the swapchain vtable from a throwaway D3D11
 swapchain, which ReShade wraps too, so we hook ReShade's swapchain `Present` - the one the game calls - and draw before
-ReShade's effects. Verified 2026-10-18 (`first frame via Present1`, F7 text drawn). The dll logs where dxgi.dll / d3d11.dll were loaded from.
+ReShade's effects. Verified 2026-10-18 (`first frame via Present1`, F7 text drawn). F9 copies the backbuffer at that point (render/raw_shot.h), so screenshots show the game without ReShade's effects. The dll logs where dxgi.dll / d3d11.dll were loaded from.
 
 **Lua**: Lua 5.1 appears to be linked into the exe (string `Lua 5.1` at file offset 0x1993B60; not looked at further).
 The `pc\Lua_*DLL.dll` files next to it are **32-bit** (machine 0x14C) leftovers with `lua_pcall` etc. exported; the

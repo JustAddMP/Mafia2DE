@@ -9,6 +9,7 @@
 #include "game/game_module.h"
 #include "render/overlay.h"
 #include "render/present_hook.h"
+#include "render/raw_shot.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -26,6 +27,7 @@ struct State {
     unsigned framesSinceHeartbeat = 0;
     bool overlayVisible = false;  // the debug status text (top-left, F7); banners and panels are drawn regardless
     bool toggleKeyDown = false;
+    bool shotKeyDown = false;
     std::vector<render::OverlayLine> status;
     float minDt = 1e9f;
     float maxDt = 0.0f;
@@ -34,18 +36,30 @@ struct State {
 
 State _state;
 
-// F7 toggles the debug status text; only while this game's window is in the foreground.
-void PollToggleKey() {
-    const bool down = (ui_input::RealAsyncKeyState(VK_F7) & 0x8000) != 0;
-    const bool wasDown = _state.toggleKeyDown;
-    _state.toggleKeyDown = down;
-    if (!down || wasDown) return;
+bool GameInForeground() {
     DWORD pid = 0;
     HWND fg = GetForegroundWindow();
-    if (!fg) return;
+    if (!fg) return false;
     GetWindowThreadProcessId(fg, &pid);
-    if (pid != GetCurrentProcessId()) return;
-    Mod::SetDebugOverlay(!_state.overlayVisible, false);
+    return pid == GetCurrentProcessId();
+}
+
+// True once per press of vk.
+bool KeyPressed(int vk, bool& wasDown) {
+    const bool down = (ui_input::RealAsyncKeyState(vk) & 0x8000) != 0;
+    const bool pressed = down && !wasDown;
+    wasDown = down;
+    return pressed;
+}
+
+// F7 toggles the debug status text, F9 saves the frame as the game drew it (render/raw_shot.h); only while this
+// game's window is in the foreground.
+void PollKeys() {
+    const bool f7 = KeyPressed(VK_F7, _state.toggleKeyDown);
+    const bool f9 = KeyPressed(VK_F9, _state.shotKeyDown);
+    if (!(f7 || f9) || !GameInForeground()) return;
+    if (f7) Mod::SetDebugOverlay(!_state.overlayVisible, false);
+    if (f9) render::RequestRawShot();
 }
 
 void StatusLines(std::vector<render::OverlayLine>& out) {
@@ -57,7 +71,7 @@ void StatusLines(std::vector<render::OverlayLine>& out) {
     out.push_back({line, 0xFFD1AC62});
     std::snprintf(line, sizeof line, "backbuffer %ux%u, frame %llu, up %.0f s", w, h, _state.frames, _state.uptime);
     out.push_back({line, 0xFFE9E5DB});
-    out.push_back({"F8: CO-OP panel   F7: this text", 0xFFA8A398});
+    out.push_back({"F8: CO-OP panel   F7: this text   F9: raw screenshot", 0xFFA8A398});
 }
 
 } // namespace
@@ -103,7 +117,7 @@ void Mod::Tick(float dt) {
         if (open) MC_LOG_INFO("mod: panel state: %s", CoopUi::Describe().c_str());
     }
 
-    PollToggleKey();
+    PollKeys();
     _state.status.clear();
     if (_state.overlayVisible) StatusLines(_state.status);
     render::Overlay::Draw(render::GameSwapChain(), _state.status, CoopUi::Draw());

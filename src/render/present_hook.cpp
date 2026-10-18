@@ -2,6 +2,7 @@
 
 #include "core/hook.h"
 #include "core/log.h"
+#include "render/raw_shot.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -67,6 +68,7 @@ void OnFrame(IDXGISwapChain* sc, const char* via) {
                               : 0.0f;
     _last = now;
     if (_onFrame) _onFrame(dt);
+    CaptureRawShotIfRequested(sc);  // after the overlay, before the real Present (and anything chained there)
 }
 
 // The game's device is gone (driver reset, GPU removed): every resource made on it is useless. The game recreates

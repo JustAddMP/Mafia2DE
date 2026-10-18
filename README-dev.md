@@ -112,6 +112,8 @@ folder>` (if Steam lookup fails).
    Esc / B / the footer's BACK return to the main menu.
 3. **Compare**: screenshot the CO-OP page and the game's own EXTRAS page side by side (same resolution): header bar,
    title font, list font and spacing, selection highlight, footer and glyphs should match; only the texts differ.
+   F9 (game window in the foreground) saves the frame as the game drew it, before ReShade or any other injector
+   chained after our Present hook, to `out\logs\shotsaw-<n>.bmp`; the docs screenshots are taken that way.
 4. **Pause menu** (load a save, Esc; not done in the 2026-10-18 test): a **CO-OP** entry under OPTIONS; it opens the CO-OP page in the look of the
    pause OPTIONS page; BACK returns to the pause menu. Screenshot it next to the pause OPTIONS page.
 5. **Fallback** (only if the native entries are missing): F8 opens core's overlay CO-OP panel over the game
