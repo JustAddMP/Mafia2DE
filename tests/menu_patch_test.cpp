@@ -5,7 +5,8 @@
 //   - the real thing, when the game is installed (read-only): gui-main.sds and gui.sds are read, patched and
 //     written; the patched archives must read back, have the CO-OP entry in the main menu (the former hidden debug
 //     entry after STORY) and the pause menu (the former hidden cheats entry after OPTIONS), the two CO-OP pages with
-//     our five entries in the debug screens those entries open, every changed resource exactly as big as before with
+//     our six entries (HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS, in that order, each
+//     button a copy of the template list's own button) in the debug screens those entries open, every changed resource exactly as big as before with
 //     its prefix word unchanged (the game drops the whole archive otherwise - seen in game), and every other
 //     resource byte-identical.
 //     The patched archives and reports go to out\menu_patch\ for inspection. Game folder: env M2_GAME_DIR (the
@@ -19,7 +20,9 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -202,6 +205,70 @@ int Count(const std::string& hay, const std::string& needle) {
     return n;
 }
 
+const std::vector<std::string> kExpectedEntries = {"HOST CO-OP GAME", "FREE RIDE", "JOIN FRIEND", "JOIN BY IP", "LOBBY", "SETTINGS"};
+
+// Every label once, as a literal, in this order.
+bool InOrder(const std::string& page, const std::vector<std::string>& labels) {
+    size_t at = 0;
+    for (const auto& l : labels) {
+        const std::string t = "<text text=\"" + l + "\" textid=\"0\"/>";
+        if (Count(page, t) != 1) return false;
+        const size_t p = page.find(t);
+        if (p < at) return false;
+        at = p;
+    }
+    return true;
+}
+
+bxml::Node* FirstListbox(bxml::Node* n) {
+    const std::string* ty = n->Attr("type");
+    if (n->name == "widget" && ty && *ty == "listbox") return n;
+    for (auto& c : n->children)
+        if (bxml::Node* f = FirstListbox(c.get())) return f;
+    return nullptr;
+}
+
+double Num(const std::string* v) { return v ? std::atof(v->c_str()) : -1; }
+
+// Our page's list buttons against the template page's first list button: the same properties (skin, font, colours,
+// size, text format, ...) apart from the label, the position (row i at i * row height) and visibility / tooltip.
+bool SameButtons(sds::Archive& page, const char* pageLayout, sds::Archive& tplArc, const char* tplLayout, std::string& why) {
+    bxml::Document pd, td;
+    sds::Resource* pr = page.Find(pageLayout);
+    sds::Resource* tr = tplArc.Find(tplLayout);
+    if (!pr || !tr || !bxml::Read(pr->data, pd, nullptr) || !bxml::Read(tr->data, td, nullptr)) return (why = "unreadable"), false;
+    bxml::Node* pl = FirstListbox(pd.root.get());
+    bxml::Node* tl = FirstListbox(td.root.get());
+    bxml::Node* pi = pl ? pl->Child("items") : nullptr;
+    bxml::Node* ti = tl ? tl->Child("items") : nullptr;
+    if (!pi || !ti || ti->children.empty() || pi->children.size() != kExpectedEntries.size()) return (why = "lists"), false;
+    bxml::Node* tb = ti->children.front()->Child("properties");
+    for (size_t i = 0; i < pi->children.size(); ++i) {
+        bxml::Node* b = pi->children[i]->Child("properties");
+        if (!b || !tb) return (why = "no properties"), false;
+        for (const char* k : {"skin", "color", "textformat", "size", "metrics", "hierarchy", "dock"}) {
+            bxml::Node* x = b->Child(k);
+            bxml::Node* y = tb->Child(k);
+            if ((x == nullptr) != (y == nullptr) || (x && y && bxml::ToText(*x) != bxml::ToText(*y))) {
+                // numbers may carry other trailing zeros (size padding): compare their values
+                bool same = x && y && x->attrs.size() == y->attrs.size();
+                for (size_t a = 0; same && a < x->attrs.size(); ++a)
+                    same = x->attrs[a].first == y->attrs[a].first &&
+                           (x->attrs[a].second == y->attrs[a].second || Num(&x->attrs[a].second) == Num(&y->attrs[a].second));
+                if (!same) return (why = kExpectedEntries[i] + ": " + k + " differs"), false;
+            }
+        }
+        bxml::Node* t = b->Child("text");
+        if (!t || !t->Attr("text") || *t->Attr("text") != kExpectedEntries[i]) return (why = "label " + std::to_string(i)), false;
+        const double row = Num(tb->Child("size") ? tb->Child("size")->Attr("y") : nullptr);
+        const double y = Num(b->Child("position") ? b->Child("position")->Attr("y") : nullptr);
+        if (std::abs(y - row * static_cast<double>(i)) > 0.0002) return (why = kExpectedEntries[i] + ": row position"), false;
+        bxml::Node* cd = b->Child("commondata");
+        if (!cd || !cd->Attr("visible") || *cd->Attr("visible") != "true") return (why = kExpectedEntries[i] + ": hidden"), false;
+    }
+    return true;
+}
+
 void TestGameFiles(const std::wstring& outDir) {
     const std::wstring game = FindGameDir();
     if (game.empty()) {
@@ -260,14 +327,17 @@ void TestGameFiles(const std::wstring& outDir) {
               Count(ms, "<activate action=\"menu.visibility\">\\u100</activate>") >= 2,
           "main menu screen: CO-OP always shown, opens the LoadMission screen", ms);
     const std::string page = Text(backMain, "/config/gui/ScreenLayouts/LoadMission");
-    bool all = true;
-    for (const auto& e : menu_patch::CoopEntries()) all = all && Has(page, "<text text=\"" + e + "\" textid=\"0\"/>");
-    Check(all && Has(page, "listboxExtras") && Count(page, "name=\"btnCoop") == 5, "main CO-OP page: the five entries in the EXTRAS list style");
+    Check(menu_patch::CoopEntries() == kExpectedEntries, "CO-OP entries: HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS");
+    Check(InOrder(page, kExpectedEntries) && Has(page, "listboxExtras") && Count(page, "name=\"btnCoop") == 6,
+          "main CO-OP page: the six entries, in order, in the EXTRAS list");
+    std::string why;
+    Check(SameButtons(backMain, "/config/gui/ScreenLayouts/LoadMission", mainOrig, "/config/gui/ScreenLayouts/Extras", why),
+          "main CO-OP page: FREE RIDE and the others are EXTRAS buttons (skin, font, colours, size; one row apart)", why);
     Check(Has(page, "<text text=\"CO-OP\" textid=\"0\"/>") && Has(page, "<widget name=\"layoutLoadMission\""),
           "main CO-OP page: title CO-OP, the host's root widget name");
     const std::string pageScreen = Text(backMain, "/config/gui/Screens/MainMenu/LoadMission");
     Check(Has(pageScreen, "<definition>\\sLoadMission</definition>") && Has(pageScreen, "<cancel action=\"screen.back\"/>") &&
-              Has(pageScreen, "<focus>btnCoop0</focus>") && !Has(pageScreen, "menu.mission"),
+              Has(pageScreen, "<focus>btnCoop0") && !Has(pageScreen, "menu.mission"),
           "main CO-OP page screen: its layout, Esc = back, focus on the first entry", pageScreen);
 
     // pause menu: the hidden cheats entry after OPTIONS is now CO-OP
@@ -278,10 +348,31 @@ void TestGameFiles(const std::wstring& outDir) {
     const std::string gs = Text(backGui, "/config/gui/Screens/GameMenu/GameMenu");
     Check(Has(gs, ">Cheats</use>") && !Has(gs, ">\\u130<"), "pause menu screen: CO-OP always shown, opens the Cheats screen");
     const std::string pp = Text(backGui, "/config/gui/ScreenLayouts/Cheats");
-    Check(Has(pp, "listboxOptions") && Count(pp, "name=\"btnCoop") == 5, "pause CO-OP page: the five entries in the OPTIONS list style");
+    Check(InOrder(pp, kExpectedEntries) && Has(pp, "listboxOptions") && Count(pp, "name=\"btnCoop") == 6,
+          "pause CO-OP page: the six entries, in order, in the OPTIONS list");
+    why.clear();
+    Check(SameButtons(backGui, "/config/gui/ScreenLayouts/Cheats", mainOrig, "/config/gui/ScreenLayouts/OptionsGameMenu", why),
+          "pause CO-OP page: FREE RIDE and the others are pause OPTIONS buttons", why);
     const std::string ps = Text(backGui, "/config/gui/Screens/GameMenu/Cheats");
     Check(Has(ps, "<definition>\\sCheats</definition>") && !Has(ps, "options.back") && !Has(ps, "game.cheat"),
           "pause CO-OP page screen: its layout, plain back, no cheats", ps);
+    why.clear();
+    for (const auto* scr : {&pageScreen, &ps})
+        for (int i = 0; i < 6; ++i)
+            if (!Has(*scr, "<widget name=\"btnCoop" + std::to_string(i)) ||
+                !Has(*scr, "<cursor-over action=\"container.selectItem\""))
+                why += "screen widget btnCoop" + std::to_string(i) + " missing ";
+    Check(why.empty() && Count(pageScreen, "\">btnCoop") == 6 && Count(ps, "\">btnCoop") == 6,
+          "both CO-OP page screens: every entry (FREE RIDE too) selected by mouse hover", why);
+    // the screens name exactly the layouts' buttons (the names may carry filler characters to keep the size)
+    why.clear();
+    for (const auto& [lay, scr] : {std::pair<const std::string*, const std::string*>{&page, &pageScreen}, {&pp, &ps}})
+        for (size_t p = lay->find("<widget name=\"btnCoop"); p != std::string::npos; p = lay->find("<widget name=\"btnCoop", p + 1)) {
+            const size_t q = p + 14, e = lay->find('"', q);
+            const std::string nm = lay->substr(q, e - q);
+            if (!Has(*scr, "<widget name=\"" + nm + "\">") || !Has(*scr, "\">" + nm + "</cursor-over>")) why += nm + " ";
+        }
+    Check(why.empty(), "both CO-OP pages: screen and layout name the same entry widgets", why);
 
     // the game's check: a changed resource keeps its exact size and its prefix word
     auto sameShape = [](const sds::Archive& orig, const sds::Archive& back, const std::vector<std::string>& changed,

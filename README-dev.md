@@ -1,7 +1,8 @@
 # Mafia II: Definitive Edition co-op - developer notes
 
 Menu-only build: the mod gets into the game and puts a CO-OP entry into the game's own main menu and pause menu,
-each opening a CO-OP page drawn by the game itself (HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS).
+each opening a CO-OP page drawn by the game itself (HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY,
+SETTINGS).
 The entries do nothing yet; there is no networking. Plan: [docs/PLAN.md](docs/PLAN.md). What we know about the game:
 [docs/re-notes.md](docs/re-notes.md). First in-game test: [docs/test-2026-10-18-menu-launch.md](docs/test-2026-10-18-menu-launch.md)
 (main menu CO-OP entry and page work and look like the game's own; pause menu not reached yet).
@@ -52,8 +53,8 @@ build.cmd test     the same, then runs every test (output in out\<test>.txt); ex
 - `menu_nav`: core's overlay panels (the F8 fallback) driven by injected keys.
 - `pad_nav`, `ui_prompts`: core's pad navigation and footer prompt logic (copied tests).
 
-Last result (2026-10-18, after the first test launch): build warning-free, all four tests pass (menu_patch_test 36
-checks against the installed game).
+Last result (2026-10-19, FREE RIDE entry): build warning-free, all four tests pass (menu_patch_test 41 checks, 27
+of them against the installed game).
 
 ## Launch (the coordinator's test)
 
@@ -85,14 +86,15 @@ folder>` (if Steam lookup fails).
   `Documents\My Games\...\Data\sds\...`, `EDIT\sds\...`, `pc\sds_en\...`, then `pc\sds\...`. **Key lines** (gui.sds
   is opened first, then gui_definitive_edition.sds, then gui-main.sds):
   `menu: gui.sds: entry CO-OP: btnCheats in listboxGameMenu (1 visibility condition(s) -> always shown)`,
-  `menu: gui.sds: /config/gui/ScreenLayouts/Cheats: 55 invisible filler(s) to keep its size`,
-  `menu: gui.sds: page built in /config/gui/Screens/GameMenu/Cheats / /config/gui/ScreenLayouts/Cheats (5 entries, list listboxOptions)`,
+  `menu: gui.sds: /config/gui/ScreenLayouts/Cheats: 52 invisible filler(s) to keep its size`,
+  `menu: gui.sds: page built in /config/gui/Screens/GameMenu/Cheats / /config/gui/ScreenLayouts/Cheats (6 entries, list listboxOptions)`,
   `menu: gui.sds patched in N ms: 2697688 -> 9628670 bytes, 88 resources -> ...cache\<pid>-gui.sds`,
   `sds: ...\pc\sds\gui\gui.sds -> ...cache\<pid>-gui.sds`; then for gui-main.sds
   `entry CO-OP: btnLoadMission in listboxMainMenu (2 visibility condition(s) -> always shown)`,
-  `.../Screens/MainMenu/LoadMission: no remember-focus (size)`, `... plain fades (size)`,
-  `.../ScreenLayouts/LoadMission: 15 invisible filler(s) to keep its size`,
-  `page built in /config/gui/Screens/MainMenu/LoadMission / ... (5 entries, list listboxExtras)`,
+  `.../Screens/MainMenu/LoadMission: no remember-focus (size)`, `... plain fades (size)`, `... no fades (size)`,
+  `.../ScreenLayouts/LoadMission: 12 invisible filler(s) to keep its size`,
+  `page built in /config/gui/Screens/MainMenu/LoadMission / ... (6 entries, list listboxExtras)`,
+  `.../Screens/MainMenu/LoadMission: entry names 7 character(s) longer to keep its size`,
   `gui-main.sds patched in N ms: 5812140 -> 14428432 bytes, 446 resources`, `sds: ...gui-main.sds -> ...`.
   A `FAILED: ... cannot keep its size` line means that menu stays unchanged (the game's own archive is used).
 - `init: game window ... class 'Mafia II: Definitive Edition' title 'Mafia II: Definitive Edition'`
@@ -107,15 +109,22 @@ folder>` (if Steam lookup fails).
 1. **Main menu** (after the title screen's "Press any key"): a **CO-OP** entry right under THE STORY, same font, size, colour and highlight as the other entries.
    Mouse hover, arrow keys / d-pad and the pad highlight it like the others; the menu's own sounds play.
 2. Select it (Enter / click / A): the game's page transition, then a page that looks like **EXTRAS** but titled
-   **CO-OP**, listing HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS, with the usual footer (BACK / SELECT
-   with the pad glyphs; with keyboard and mouse only BACK shows, as on EXTRAS). Navigate it with keys, mouse and pad. Selecting an entry does nothing (expected).
+   **CO-OP**, listing HOST CO-OP GAME, **FREE RIDE**, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS (in that order), with
+   the usual footer (BACK / SELECT with the pad glyphs; with keyboard and mouse only BACK shows, as on EXTRAS).
+   FREE RIDE (new since the 2026-10-18 test) must look exactly like its neighbours: same font, size, colour, left
+   edge, row spacing (one row under HOST CO-OP GAME, the rest one row lower than before), highlight on hover / keys /
+   pad, the same move sound. Navigate the page with keys, mouse and pad; the highlight goes through all six entries
+   in order and wraps as on EXTRAS. Selecting an entry does nothing (expected; FREE RIDE too).
+   The page now opens without the 0 s fade elements (they were dropped to keep the screen's size; EXTRAS' own fades
+   are 0 s too): the transition should look the same as before.
    Esc / B / the footer's BACK return to the main menu.
 3. **Compare**: screenshot the CO-OP page and the game's own EXTRAS page side by side (same resolution): header bar,
    title font, list font and spacing, selection highlight, footer and glyphs should match; only the texts differ.
    F9 (game window in the foreground) saves the frame as the game drew it, before ReShade or any other injector
    chained after our Present hook, to `out\logs\shotsaw-<n>.bmp`; the docs screenshots are taken that way.
 4. **Pause menu** (load a save, Esc; not done in the 2026-10-18 test): a **CO-OP** entry under OPTIONS; it opens the CO-OP page in the look of the
-   pause OPTIONS page; BACK returns to the pause menu. Screenshot it next to the pause OPTIONS page.
+   pause OPTIONS page, with the same six entries (FREE RIDE second); BACK returns to the pause menu. Screenshot it
+   next to the pause OPTIONS page.
 5. **Fallback** (only if the native entries are missing): F8 opens core's overlay CO-OP panel over the game
    (keyboard / mouse / pad, Esc closes); F7 toggles a small status text. Not the target look.
 6. Quit the game normally; nothing else to clean up (`out\cache\` is cleared at the next start).

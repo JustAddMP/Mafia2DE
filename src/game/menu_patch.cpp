@@ -345,8 +345,10 @@ bool RepurposeEntry(Ctx& c, Res& screen, Res& layout, const char* list, const ch
 // Builds the CO-OP page into a host screen/layout pair from a template page (a screen + its layout): same look; the
 // title says CO-OP; the list holds our entries; Esc / B / the footer's BACK go back to the menu. Both host resources
 // keep their size; the host layout keeps its root widget name.
-bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
-               Res& hostLayout, const char* hostLayoutName) {
+// `nameExtra` lengthens the entries' widget names (invisible) by that many characters in all: BuildPage's last
+// resort when the screen is a few bytes short and too tight for one more padding event.
+bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
+                   Res& hostLayout, const char* hostLayoutName, size_t nameExtra) {
     const size_t screenSize = hostScreen.res->data.size(), layoutSize = hostLayout.res->data.size();
     // ---- layout ----
     auto layout = tplLayout.root->Clone();
@@ -381,7 +383,8 @@ bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tp
     const auto& entries = CoopEntries();
     std::vector<std::string> names;
     for (size_t i = 0; i < entries.size(); ++i) {
-        names.push_back("btnCoop" + std::to_string(i));
+        const size_t n = entries.size(), extra = nameExtra / n + (i < nameExtra % n ? 1 : 0);
+        names.push_back("btnCoop" + std::to_string(i) + std::string(extra, 'x'));
         items->children.push_back(MakeButton(*tplButton, names.back(), entries[i], row * static_cast<double>(i)));
     }
 
@@ -422,7 +425,7 @@ bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tp
     hostLayout.doc.root = std::move(layout);  // the host resources keep their own prefix (name, check value)
     hostScreen.doc.root = std::move(screen);
     // The host screen may be smaller than the template's (main menu: LoadMission 3142 bytes, EXTRAS 5937): drop
-    // what the page can do without until it fits - remembering the focus, then the blend type of the fades.
+    // what the page can do without until it fits - remembering the focus, the blend type of the fades, the fades.
     const size_t padCost = 160;  // about what the pad event FitScreen adds costs
     Node* cfg = hostScreen.doc.root->Child("config");
     Node* st = cfg ? cfg->Child("settings") : nullptr;
@@ -435,16 +438,41 @@ bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tp
             if (Node* n = st->Child(f)) n->attrs.clear();
         c.Log(hostScreen.res->sourceName + ": plain fades (size)");
     }
+    // The fades are 0 s long ("\f0", as on EXTRAS), so leaving them out changes nothing on screen; the game's own
+    // Garage, PhoneMenu and Question screens have none.
+    if (st && Size(hostScreen) + padCost > screenSize) {
+        RemoveChildren(st, "fade-in");
+        RemoveChildren(st, "fade-out");
+        c.Log(hostScreen.res->sourceName + ": no fades (size)");
+    }
     if (!FitLayout(c, hostLayout, layoutSize) || !FitScreen(c, hostScreen, screenSize)) return false;
     c.Log(std::string("page built in ") + hostScreen.res->sourceName + " / " + hostLayout.res->sourceName + " (" +
           std::to_string(entries.size()) + " entries, list " + list + ")");
     return true;
 }
 
+bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
+               Res& hostLayout, const char* hostLayoutName) {
+    constexpr size_t kMaxNameExtra = 48;
+    for (size_t extra = 0;; ++extra) {
+        Result attempt;
+        Ctx a{attempt};
+        const bool ok = BuildPageOnce(a, tplScreen, tplLayout, hostScreen, hostLayout, hostLayoutName, extra);
+        if (ok || extra == kMaxNameExtra) {
+            if (ok && extra)
+                a.Log(hostScreen.res->sourceName + ": entry names " + std::to_string(extra) +
+                      " character(s) longer to keep its size");
+            c.res.log.insert(c.res.log.end(), attempt.log.begin(), attempt.log.end());
+            return ok;
+        }
+    }
+}
+
 }  // namespace
 
 const std::vector<std::string>& CoopEntries() {
-    static const std::vector<std::string> k = {"HOST CO-OP GAME", "JOIN FRIEND", "JOIN BY IP", "LOBBY", "SETTINGS"};
+    static const std::vector<std::string> k = {"HOST CO-OP GAME", "FREE RIDE", "JOIN FRIEND", "JOIN BY IP",
+                                                "LOBBY", "SETTINGS"};
     return k;
 }
 

@@ -1,7 +1,7 @@
 # Plan - next steps
 
-Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-18
-(menu-only build after its first test launch, `test-2026-10-18-menu-launch.md`). Read with `re-notes.md` (what we
+Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-19
+(FREE RIDE entry on the CO-OP pages; Free Ride research, re-notes.md 5). Read with `re-notes.md` (what we
 know about the game) and `../README-dev.md` (build, launch, the test checklist).
 
 ## Where we are
@@ -40,10 +40,11 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
 - [x] **Present hook and overlay over Mafia II DE** (D3D11 flip-model swapchain, with the user's ReShade dxgi.dll in
   between): gate: `render: first frame via Present...` in the log, F7 status text draws.
 - [ ] **CO-OP entry in the main menu** (after STORY) opening the game-drawn CO-OP page (EXTRAS look: title CO-OP,
-  HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS; BACK / Esc / B return), keyboard, mouse and pad
+  HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS; BACK / Esc / B return), keyboard, mouse and pad
   navigation by the game itself. Gate: screenshot of our page next to the game's EXTRAS page - same fonts, colours,
   highlight, footer, sounds. Status 2026-10-18: works with keyboard and mouse and matches EXTRAS (screenshots in the
-  test log); still to check: pad navigation and glyphs, the sounds (the test ran muted, no pad).
+  test log); still to check: pad navigation and glyphs, the sounds (the test ran muted, no pad). 2026-10-19: FREE
+  RIDE added as the second entry (both pages; does nothing yet), not seen in game yet.
 - [ ] **CO-OP entry in the pause menu** (after OPTIONS) opening the same page in the pause OPTIONS look. Gate: as above
   against the pause OPTIONS page. Status: built (the hidden cheats entry), the archive loads; needs a loaded save.
 - [ ] **Overlay fallback**: F8 opens core's CO-OP panels (only for testing while the native pages are not working;
@@ -56,8 +57,8 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
   files (`src/core`, `src/render`, `src/dll`, `third_party`), GameModule + GetGameInfo as in Mafia DE; core changes
   needed for Mafia II (xinput1_4, GetAsyncKeyState blocking, exe in a subfolder, steam_api64 imported by the game)
   go to core first.
-- [ ] **B2 Entries do things**: HOST / JOIN FRIEND / JOIN BY IP / LOBBY / SETTINGS call core's Coop. Needs a way
-  for a menu action to reach our code: find the engine's action dispatcher (actions are hashed with FNV-1 64,
+- [ ] **B2 Entries do things**: HOST / JOIN FRIEND / JOIN BY IP / LOBBY / SETTINGS call core's Coop (FREE RIDE: item
+  D-FR). Needs a way for a menu action to reach our code: find the engine's action dispatcher (actions are hashed with FNV-1 64,
   re-notes.md 3) and hook it for our own action names, or watch screen activation. The game's own dialog
   screens (`Screens/Dialog/SimpleDialog`, `ListDialog`, keyboard `dialog.launchKeyboard`) for JOIN BY IP and
   messages, so they look native too.
@@ -76,6 +77,23 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
 - [ ] Damage and deaths.
 
 ### D. Shared world (phase 4)
+- [ ] **D-FR Free Ride** (co-op without the story: both players in an open Empire Bay, cars, traffic, police, a
+  chosen time of day and weather). Research: re-notes.md 5. Most promising approach: start the game's own,
+  still shipped FREE RIDE debug mission (base game: mission `freeride` number 0, game `FirstCity`, stream-map
+  game "Free Raid", script `/missions/FreerideMain`; parts 1-6 = summer day / rain / night, winter day / snow /
+  night). Steps: (1) the CO-OP page's FREE RIDE entry starts it in single player through the game's own menu
+  action `game.mission.load` (data only, same-size patch; a part picker page in the game's style for the six
+  weathers); (2) our own FreerideMain replacement (no test cars and NPCs, no `SaveGame(1)`, our start position)
+  through the Lua bridge (item C) or a patched script resource; (3) host starts Free Ride, the guest is sent
+  the same part and loads it, then phase 3 (players, cars) and D's time / weather / traffic sync run on it.
+  Done includes tests: the menu patch test checks the entry's action and parts; a two-instance test drives
+  around together. Open questions: the meaning of `game.mission.load`'s value (mission number or index?) and
+  whether `gameLine` 1 is right for the base game; does the debug mission still load in the DE (assets, the
+  `Free Raid` stream-map lines) and does the city come up with traffic, police and shops; its `SaveGame(1)`
+  (may overwrite a story save - back up saves before any test); whether `game.start operation="FreeRide"` (in the
+  exe, unused by any menu) is a cleaner entry; the JA free ride (`gameLine 6`, mission 60) as the alternative
+  with Joe as the player; how the guest's game is told which part to load; pause menu behaviour (RETRY / EXIT)
+  in a debug mission.
 - [ ] Time of day / weather, story progress (chapters, checkpoints, objectives), cutscenes, mission NPCs and cars,
   traffic and police, items. Research first, as for Mafia DE (docs/research-world-sync.md there).
 

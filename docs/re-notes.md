@@ -135,7 +135,8 @@ zeros):
   `ScreenLayouts/LoadMission`, `Screens/GameMenu/Cheats` + `ScreenLayouts/Cheats`) from the EXTRAS page
   (`Screens/MainMenu/Extras` + `ScreenLayouts/Extras`) and the pause OPTIONS page (`Screens/GameMenu/Options` +
   `ScreenLayouts/OptionsGameMenu`): same frame, header, list style and footer; the title says CO-OP, the list holds
-  HOST CO-OP GAME, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS (literal text), `cancel` and the footer's BACK do
+  HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS (literal text; each button a copy of the
+  template list's first button, one row apart), `cancel` and the footer's BACK do
   `screen.back`. The host layout keeps its root widget name. Daemons are not touched.
 - sizes: every patched resource is padded back to its exact original size (section 4).
 - delivery: the dll hooks CreateFileW/A and GetFileAttributes(Ex)A/W; when the game opens an existing
@@ -184,7 +185,11 @@ change (the CO-OP pages have other trees than the screens they replace, and load
 - in screens: `<hide action="menu.removeVariable" name="CoopPadN..."/>` on the last widget's events (nothing follows
   in the string table, so the name's length takes up the last bytes exactly);
 - shrinking a screen: dropping `remember-focus` and the fades' `type="blend"` (the main CO-OP page, hosted in the
-  3142-byte LoadMission screen, needed both).
+  3142-byte LoadMission screen, needed both with five entries); with six entries also dropping the fade elements
+  (they are 0 s long, `\f0`, as on EXTRAS; the game's own Garage, PhoneMenu and Question screens have none -
+  UNVERIFIED in game);
+- when a screen ends up a few bytes short and too tight for one more padding event: longer (invisible) entry
+  widget names in the screen and the layout (`btnCoop0xx`, ...; the main CO-OP page needs 7 characters).
 
 **Not padding:** a label literal. A non-empty `text="..."` is drawn **instead of** the `textid` string (padding
 MAIN MENU's literal with spaces made the title blank), so `text` only stays empty where `textid` is used.
@@ -195,3 +200,126 @@ the game draws its own software cursor and moves it from relative mouse input.
 
 **Still UNVERIFIED:** the pause menu entry and page (needs a loaded save), pad navigation and glyphs, the menu
 sounds (the game was muted; the page uses the same widgets as EXTRAS).
+
+## 5. Free Ride: what the game has for an open city without the story (static, 2026-10-19)
+
+Mafia II has no free-roam mode in its menus (Free Ride exists in Mafia DE and, as a debug mission, in Joe's
+Adventures). Looked at statically, read-only: the exe's strings, the SDS archives' resource indexes (all 4530
+archives under `pc\sds` and `pc\dlcs`, our scratch scripts), the GUI binary XML, the stream-map and game files
+in `EDIT\`, the DLC `content` descriptors, and the Lua scripts (disassembled with our own Lua 5.1 bytecode lister,
+written from the public Lua 5.1 format). Nothing here was tried in game: all of it is **UNVERIFIED** in a running
+game.
+
+**Lua in the game.** Mission scripts are `Script` resources in `pc\sds\missionscript\*.sds` (and `script\`):
+a name prefix (`/scripts/missions/<Name>/`) then one or more Lua 5.1 chunks (`\x1bLuaQ`), each with its file name
+(`/scripts/missions/FreerideMain/FreerideScript.lua`). The chunks carry constants and function line ranges but
+no per-instruction lines. Header: little endian, int 4, size_t 4, instruction 4, **lua_Number 4 bytes, float**
+(not the stock double): our own chunks for the game's VM must be compiled for that format. Each mission archive
+also has a `MemFile /missions/<Name>/scriptname.txt`, a `FrameResource`, `FrameNameTable` and `Actors` (the
+mission's own entities). Script entry points are globals `onGameInit` / `onEvent` (exe strings `onGameDone`,
+`onEvent`, `ScriptMachine`).
+
+**1. A free-ride mission is still in the base game.**
+- `pc\sds\missionscript\freeraid_main.sds` (6929 bytes): script `/missions/FreerideMain`
+  (`FreerideScript.lua`). Its start function `FreeRideStart2` (a `CommandBuffer` sequence):
+  - `game.sds:ActivateStreamMapLine("free_summer_load")` if `game.datastore:GetNumber("missionPart") < 4`, else
+    `"free_winter_load"`;
+  - `game.gfx:SetWeatherTemplate(...)` by part: 1 `DTFreeRideDay`, 2 `DTFreeRideDayRain`, 3 `DTFreerideNight`
+    (summer), 4 `DTFreeRideDayWinter`, 5 `DTFreeRideDaySnow`, 6 `DTFreeRideNightSnow` (winter);
+  - `game.game:SaveGame(1)` and waits for it (**it saves - may overwrite a story save; back up saves before any
+    test**);
+  - `game.game:GetActivePlayer()`, `player:SetPos` to (69.63, 909.08, -19.63); about 70 `game.garage:CheatAddCar(
+    "<model>", true)` calls (every car model, Ascot_BaileyS200_pha ... Moscardo_AS37_pha) - fills the garage;
+    `ActivateStreamMapLine("free_joe_load")`, waits for `game.sds:GetSyncObjectForLoadSDS("italy")`;
+  - `game.traffic:OpenSeason(140)` (summer) / `(50)` (winter), `game.speech:LoadStage(...)` the same numbers,
+    `game.radio:SetContent("Empire" / "Classic" / "Delta", "all", "<station>_07010" or "_02004")`;
+  - test content: entities `Joe`, `Henry` (wingmen to recruit by an action, with `ChangePlayerModel` suit
+    changes VITSUIT / VITTUX / VITPRA), `Hunter` and `Escaper` (two AI cars, `CarAIProfile.PIRATE`, a chase);
+    `ai.relationships:SetRelationship` player <-> Clemente gang;
+  - `player:SetControlStyle(enums.ControlStyle.FREE)`, `game.game:SoundFadeIn`, `game.hud:FaderFadeIn` - the
+    player gets control.
+- It is listed as a real mission in the debug mission list `/config/gui/Missions` (gui-main.sds):
+  `<mission name="freeride" number="0" title="FREE RIDE">` with parts `freeride1`..`freeride6` "Summer Day",
+  "Summer Day Rain", "Summer Night", "Winter Day", "Winter Day Snow", "Winter Night" (no `gameLine`: the story's).
+  That list is shown by the hidden "DEBUG Load Chapter" entry's screen `LoadMission`
+  (`menu.mission.filllist saveId 1..4`) and its `MissionParts` screen (`menu.mission.fillpartlist`) - the entry and
+  screen our main menu CO-OP entry and page now use, so the debug loader is gone from our patched menu.
+- The base stream map `EDIT\tables\StreamMapa.bin` (`StrM`, version 6; named file groups such as `Director_Lua-1`,
+  `City_Ground-1`, then games with named lines) has a game **"Free Raid"** with the lines `free_area_state`,
+  `freeraid_main`, `free_summer_load` / `summer_release`, `free_winter_load` / `winter_release`, `free_joe_load`,
+  `generic_quest1`..`4`, `free_ride_joe_end`; it lists `/sds/missionscript/freeraid_main.sds` and
+  `/sds/skies/freeride.sds`. The format is not decoded further (which archives each line loads is open).
+- Its sky archive `pc\sds\skies\freeride.sds` has the day presets `DTFreeRideDay`, `...DayRain`, `...DaySnow`,
+  `...DayWinter`, `DTFreerideNight`, `DTFreeRideNightSnow`, the time preset `TTFreeRide` and the weather presets
+  `WTFreeRide*`.
+- The exe knows a start operation **`FreeRide`**: `game.start` operations are `NewGame`, `Continue`, `QuickFight`,
+  `QuickRace`, `FreeRide`, `Retry`, `Load` (strings at 0x18d6668..). No menu uses `FreeRide`, `QuickFight` or
+  `QuickRace`; what `FreeRide` does is open.
+
+**2. Joe's Adventures.** The DE ships every DLC with the base game: `pc\dlcs\cnt_joes_adventures` (and
+`cnt_jimmys_vendetta`, `cnt_betrayal_of_jimmy`, the car / suit packs) are in the base depot 1030831 (the only
+installed depot in the app manifest); the base `pc\sds` has its menus (`gui\gui-main_dlc_ja.sds`,
+`ingame_gui_ja.sds`), its skies (`skies\ja_sky.sds`) and 156-byte empty placeholder archives for its files
+(`missionscript\dlc_*.sds`, `city\dlc*.sds`).
+- `pc\dlcs\cnt_joes_adventures\content` (XML): package "Joe's Adventures" (Id 96); mounts `<dlc>\sds` (and
+  `sds_<lang>`) over `/sds` for 3095 listed files on trigger `GameLine_6` (so the DLC's real archives replace the
+  placeholders while game line 6 runs); content `MISSION_PACK_V2` with `MissionPackId 6`, `StreamMapFile
+  /tables/M2DLC_Joes_Adventures_sm.bin` (in `game_edit\tables`), `StreamMapLine game_main_load`,
+  `FirstMission 61`, `FirstPart 1`, `MissionCount 4`, `OpenString CITY_TRICK`, `MenuScreen
+  DLC_JoesAdventure_Loading`, `GuiSDS /sds/gui/gui-main_dlc_ja`, `IngameGuiSDS /sds/gui/ingame_gui_ja.sds`,
+  `CharUniversSDS /sds/player/joeh.sds`, `MapScreen MapJA`; player content `JOECIV2`.
+- Start: the DLC screen `DLC_JoesAdventure` -> difficulty -> `game.start operation="NewGame" saveId="\u6"`
+  (Continue: `operation="Continue" saveId="\u6"`). The open city between missions is run by a "game director"
+  script in the stream map's `Director_Lua-1` slot (`/sds/missionscript/dlc_game_director_2.sds`; the base game's
+  `game_director.sds` holds `GameDirector.lua`, `CityQuestManager.lua`, `ListOfQuests.lua`, `RoadblockManager.lua`,
+  `TempQuestStarter.lua`: city quests, roadblocks, `LoadQuestSds`, `ActivateStreamMapLine`).
+- Its mission list `/config/gui/dlcs/JoesAdventure/MissionsJA` (gui-main_dlc_ja.sds in `sds_<lang>`, loaded by
+  `menu.AddMissionList` on `DLC_JoesAdventure_Loading`): `freeride` number 60 "JA - FREE RIDE" (parts
+  `freeridea`..`f`, the same six weathers), `m01` 61 WITNESS (10 parts), `m02` 62 CONNECTION, `m03` 63
+  SUPERMARKET, `m04` 64 CATHOUSE, `m05` 65 CONSTRUCTION, `m06` 66 CITY QUESTS, `testscene` 80; all `gameLine 6`.
+  Shown only by JA's own hidden debug entry (`btnLoadMission`, `\u145`, screen `DLC_JA_LoadMission`,
+  `menu.mission.filllist saveId 6`).
+- JA's free ride script: `/missions/DLC_FreerideMain` in `dlcs\cnt_joes_adventures\sds\missionscript\
+  dlc_freeraid_main.sds` (mounted by `GameLine_6`), the same as the base one without the Hunter / Escaper chase,
+  with `ChangePlayerModel("JOEL1")`; the JA stream map has a `freeride_group` (`DLC_free_ride_start`,
+  `free_summer_load` / `_end`, `free_winter_load` / `_end`, `DLC_free_ride_end`).
+- The base gui-main.sds still has an older, unreferenced `Screens/MainMenu/JoeAdventure` (layout `MafiaArcade`,
+  not in the daemon): `game.start NewGame \u3`, and `game.mission.load part="\u1" game="\sFirstCity"
+  gameLine="\u3"` with the value `\u2` - the only use of `game.mission.load` in the menus, and the base mission
+  list's old JA block (`gameLine 3`, missions 61..70, its `freeride` number 60). Save ids seen: 1 story, 2 Jimmy's
+  Vendetta, 3 old JA, 4 Betrayal of Jimmy, 6 Joe's Adventures, 98 benchmark.
+
+**3. A chapter's city without its story scripts.** Each chapter's script is its own archive
+(`missionscript\m02_main.sds`, `m03_agnelo.sds`, ...) that the stream map loads by line (`02_main_load`,
+`02_part_N_load`, ...), and the engine accepts empty 156-byte archives in place of real ones (the DLC
+placeholders). So our archive redirect (re-notes 3, `sds_redirect.cpp`) could hand the game an empty archive
+for a chapter's mission script. But the script is what unlocks the player: the free ride script shows what a
+mission script must do itself - stream lines for the season, weather template, traffic season, speech stage,
+radio, `SetControlStyle(FREE)`, sound and fader fade-in. Without it the game would most likely stay black /
+locked, and chapter state (city parts, shops, the `CityParts - Open` style lists in the exe, police) belongs to
+the chapter's own lines. Possible, but every chapter is a different case; the free ride mission is the clean base.
+
+**4. World, time of day, weather** (exe strings and the free ride script):
+- The game: `/games/FirstCity.bin` (`EDIT\games`, `rpmg` v6: `/sds/City/`, `/sds/Shops/`, `/sds/Traffic/`,
+  `/sds/Cars/`, fog `fog_sky_den`, open string `CITY_trick`, `/missions/CITY/actors_player.bin`); the exe's
+  `FirstCity`, `/tables/StreamMapa.bin`, `StreamMapFile` / `StreamMapLine`, the lines `game_main_load`,
+  `carcyclopedia_load`, `fr_director_load` (Jimmy's Vendetta), `ja_director_load`, triggers `GameLine_%d` /
+  `GameLine_%d_%s`, datastore keys `missionNumber`, `missionPart`.
+- Weather: a *day* preset (`/weatherPresets/day/DT...`) names a weather preset (`DayWeatherTemplate`, `WT...`),
+  a time preset (`DayTimeTemplate`, `TT...`: sun / moon curves), a saved time and a winter flag; scripts pick one
+  with `game.gfx:SetWeatherTemplate("DT...")`. Per-chapter sky archives `pc\sds\skies\01_01_sicily.sds` ..
+  `14_02_construction.sds`, `freeride.sds`, `ja_sky.sds`, `rtr_sky.sds`. Exe script functions nearby:
+  `SetWeatherDateTime`, `GetDayTime`, `IsTheWeatherLike`, `SetTime`.
+- Seasons: summer / winter are separate city data (`free_summer_load` / `free_winter_load`,
+  `ground_leto.sds` / `ground_zima.sds`, `/tables/WinterCity.txt`), chosen when the city loads, not switched live.
+- City life: `game.traffic` (`OpenSeason`, `CloseSeason`, `SetPolice`, `DespawnPolice`, `SwitchRoad`,
+  `SetNumCars`, `SetNumStaticCars`, `Populate`, `PoliceReinforcements`, `SwitchGenerators`), `game.sds`
+  (`ActivateStreamMapLine`, `LoadCityPart` / `ReleaseCityPart`, `LoadCityShop` / `ReleaseCityShop`), `game.radio`,
+  `game.speech`.
+
+**Most promising approach** (docs/PLAN.md item D-FR): start the base game's FREE RIDE mission (mission 0, parts
+1-6) the way the game's own debug loader does, from our FREE RIDE entry with the game's `game.mission.load`
+menu action (data only), then replace its script with our own (no test NPCs and cars, no save, our start
+position) and run co-op on it. Open: the value `game.mission.load` takes, the right `gameLine` for the base
+game, whether the debug mission still loads in the DE, what its `SaveGame(1)` overwrites, what
+`game.start operation="FreeRide"` does, and how the stream map's line format maps lines to archives.
