@@ -137,8 +137,12 @@ zeros):
   `ScreenLayouts/OptionsGameMenu`): same frame, header, list style and footer; the title says CO-OP, the list holds
   HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS (literal text; each button a copy of the
   template list's first button, one row apart), `cancel` and the footer's BACK do
-  `screen.back`. The host layout keeps its root widget name. Daemons are not touched.
+  `screen.back`. The host layout keeps its root widget name. Daemons are not touched. Since 2026-10-19 the main
+  page's FREE RIDE runs `game.mission.load` (section 5.1); to fit that action, the main page's footer A glyph is
+  hidden for good instead of shown only with a pad (its controller check is the screen data that goes).
 - sizes: every patched resource is padded back to its exact original size (section 4).
+- `freeraid_main.sds` (the FREE RIDE mission's script archive) is redirected the same way, with our Free Ride
+  script in its Script resource (section 5.1).
 - delivery: the dll hooks CreateFileW/A and GetFileAttributes(Ex)A/W; when the game opens an existing
   `...\sds\gui\gui-main.sds` or `...\sds\gui\gui.sds` it gets `<dll dir>\cache\<pid>-gui-main.sds` / `<pid>-gui.sds`,
   built at that moment from the game's file (read, inflate, patch, write raw blocks, read back as a check). The game
@@ -322,4 +326,113 @@ the chapter's own lines. Possible, but every chapter is a different case; the fr
 menu action (data only), then replace its script with our own (no test NPCs and cars, no save, our start
 position) and run co-op on it. Open: the value `game.mission.load` takes, the right `gameLine` for the base
 game, whether the debug mission still loads in the DE, what its `SaveGame(1)` overwrites, what
-`game.start operation="FreeRide"` does, and how the stream map's line format maps lines to archives.
+`game.start operation="FreeRide"` does, and how the stream map's line format maps lines to archives. The first two
+and the start operation are answered statically in 5.1 (mission number, gameLine 1; `FreeRide` is no route), and
+the first two steps are built (single player, untested in game).
+
+### 5.1 Free Ride wired (static, 2026-10-19)
+
+What the code in `src/game/freeride.cpp`, `menu_patch.cpp` and `sds_redirect.cpp` does is built on the evidence
+below (exe RVAs, image base 0x140000000; our read-only scratch tools: a string / rip-reference scanner over `.text`,
+`.pdata` function bounds, capstone disassembly). **Nothing of this has run in game yet.**
+
+**What `game.mission.load` expects.** Menu actions are registered by name: each translation unit's static
+initialisers hash the action and attribute names (FNV-1 64, RVA 0xA76940) into globals; the map from global to
+handler is built by small registration functions (`game.mission.load`: global 0x031392E0, registered at 0x63010
+with the handler object 0x01C68638, vtable 0x018D8930, whose factory 0xCAE3D0 makes action objects with vtable
+0x018D88A0). Its execute function **0xCADDF0** reads:
+- the element's own value as an unsigned number: **the mission number** (typed-value reader 0xD04880: type 3 `\u`
+  as is, type 6 string parsed as a number, missing = 0);
+- `part` (unsigned), `game` (string, empty if missing), `gameLine` (unsigned, 0 if missing), optional
+  `remember-screen` (bool);
+- and posts an event (vtable 0x018DD4B8, execute 0xCF2EB0) that calls the game manager (`[app+0x130]`, vfunc +0x48)
+  with (0, mission, part, game, gameLine) and the telemetry call 0x1000B60 (`gameType`, `partId`, `isDLC`).
+
+The proof that the value is the mission's *number* (not a list index) and that `gameLine` 1 is the base game:
+- The debug part list (`menu.mission.fillpartlist`, list item builder **0xC8E88F**) makes for every part of the
+  selected mission exactly `<use action="game.mission.load" part=PART game=GAME gameLine=LINE>NUMBER</use>` plus
+  `<cursor-over action="container.selectItem" widget=LIST>`: NUMBER = mission +0x40, PART = part +0x20, GAME =
+  mission +0x20, LINE = mission +0x48 (the action / attribute names are the hashed globals `use`, `action`,
+  `game.mission.load`, `cursor-over`, `container.selectItem`, `widget`).
+- The mission list parser (`/config/gui/Missions`, **0xD1D527**) fills that mission struct: +0x00 `name`, +0x20
+  `game` (**"FirstCity" if the attribute is missing**, 0xD1D7F3), +0x40 `number`, +0x48 `gameLine` (**1 if
+  missing**: `mov [rsp+0x30], 1` at 0xD1D5D1 before the optional attribute), +0x4C `filter`, +0x54 `titleId`, +0x58
+  `title`.
+- `<mission name="freeride" number="0">` has no `game` and no `gameLine`, so the game's own debug loader starts its
+  part N with `<use action="game.mission.load" part="\uN" game="\sFirstCity" gameLine="\u1">\u0</use>` - the action
+  our FREE RIDE entry now has (N = 1, Summer Day). Same form as the game's only data use of the action
+  (`Screens/MainMenu/JoeAdventure`: `part="\u1" game="\sFirstCity" gameLine="\u3"`, value `\u2`).
+- `game.start` (handler **0xCB2900**) posts a start event (vtable 0x018DD548, execute 0xCF2F40) that calls the same
+  vfunc +0x48 with gameLine = the save id; save id 1 is the story. So gameLine 1 = the base game's line.
+
+**`game.start operation="FreeRide"` is not a route.** 0xCB2900 compares the hashed operation with `NewGame` (-> 0),
+`Continue` (1), `Retry` (2) and `Load` (4); everything else becomes 5. The hashed globals of `FreeRide` (0x03137EE0),
+`QuickFight` (0x03137EE8) and `QuickRace` (0x03138BC8) are written by their static initialisers and never read by
+code, so `FreeRide` behaves like any unknown string (type 5, with the mission and part the game manager keeps for
+the save id - vfunc +0x250). It does not start mission 0; it is **not wired** (the mission loader route is proven
+as far as static analysis goes, and the start operation is proven not to be one).
+
+**The FREE RIDE entry and the size rule.** The loader action costs about 210 bytes of screen data. The main CO-OP
+page lives in the debug screen LoadMission (3142 bytes), which was already full with the page's six entries (each
+entry: about 275 bytes - widget, events, hover `container.selectItem`). Shorter widget names (entries `b<n>`, list
+`l`) still left it 28 bytes over. What made room: the page's footer A glyph (`imgA`) loses its screen entry - the
+`menu.visibility testController="true" \u103` event that shows it only while a pad is used (about 250 bytes) - and
+the layout hides it for good (`visible="false"`). Keyboard and mouse see no change (the glyph is hidden for them
+anyway); a pad sees `SELECT` without the A glyph. Every game screen with a list keeps its list widget entry and its
+`focus`, so those were not touched. The code tries the template's own names first and drops the glyph check only if
+nothing else fits (`menu: ... the footer's A glyph hidden for good` in the log).
+
+**No season picker yet.** A picker entry needs the loader action and the hover event: about 450 bytes each. The only
+unused screens of the main menu daemon are LoadMission (the CO-OP page) and the debug part list MissionParts (1861
+bytes: its frame, BACK / SELECT footer and list alone take about 1400, so not even one entry fits); every other
+screen is reached by the menus or named in the exe (checked: daemon screen names against all `screen.activate` /
+`next-screen` texts and the exe's strings; only `3rdPartyLogo`, 1317 bytes, is unreferenced). So FREE RIDE starts
+part 1 (Summer Day); the six presets are in `freeride::Presets()` for a picker later (needs a bigger host or a way to
+share strings in the binary XML - both open).
+
+**The script resource** (`src/game/script_res.cpp`): u32 prefix word, u16 length + path prefix, u32 count, then per
+script u64 **FNV-1 64 of the name**, u64 **FNV-1 64 of the data** (both checked against the game's
+freeraid_main.sds), u16 length + name, u32 length + chunk. The prefix word follows the XML resources' rule: script
+resources of the **same size share it** even with different contents (the eight `script\fr_bombers_*.sds` scripts,
+467 bytes: all 0x138A8754), identical contents in different archives have different words. So our chunk is padded to
+the game's exact size (13417 bytes: the resource stays 13529 bytes), the word is kept, the data hash is recomputed.
+
+**Our Free Ride script** (`freeride::Source()`, compiled by `src/game/lua51_compile.cpp`, our own compiler for the
+Lua subset it uses; no compiler for Lua 5.1 with 4-byte floats exists). Based on what FreerideScript does
+(onGameInit: `registerForMachineMessages`, `DelayBuffer:Insert(start, {self}, 100, 1, false)`, the shop status
+strings, `guid`; the start as a `CommandBuffer` sequence), with:
+1. part -> season and day preset (any part other than 1-6: Summer Day), then `free_summer_load` / `free_winter_load`;
+2. `game.gfx:SetWeatherTemplate(preset)`;
+3. `GetActivePlayer`, `Math:newVector():set(x, y, z)`, `player:SetPos`, `ActivateStreamMapLine("free_joe_load")`
+   (the game's script loads it before the wait for the city part `italy` = `pc\sds\city\italy.sds` / `italy_z.sds`,
+   Little Italy; the line also brings the test characters, which only appear when a script activates them - we never
+   do. UNVERIFIED);
+4. waits for `game.sds:GetSyncObjectForLoadSDS("italy")`;
+5. `game.traffic:OpenSeason(140 / 50)`, `game.speech:LoadStage(140 / 50)`, the three stations'
+   `game.radio:SetContent(..., "all", "<station>_07010" / "_02004")`, **police on** as the chapter scripts do it
+   (`game.police:SetDensity(0.1)` + `game.traffic:SetPolice(true)`, e.g. `m04_main`, `m05main`, `m11_main_script`),
+   `player:SetControlStyle(enums.ControlStyle.FREE)`, `game.game:SoundFadeIn(1000)`, `game.hud:FaderFadeIn(1000)`.
+
+Left out: `SaveGame(1)` + `GetSaveGameSyncObject` (no save is written by our script), Joe / Henry (wingmen, suit
+changes), the Hunter / Escaper chase, ~70 `CheatAddCar` (garage fill), the Clemente gang relationship, the
+`sendMessage(self, 2)` that sets up the wingman actions. A second start (onEvent base message 1 after the
+DelayBuffer start) does nothing.
+
+**Start position** (`freeride::kStart`): (129.164, 917.259, -21.260). The game's script parks its two test cars on
+one street: Hunter at (129.172, 910.934, -22.050), Escaper at (129.156, 923.584, -22.470) - the same x, 12.65 m apart
+in y: two cars in a row in one lane. Ours is half-way between them, 1 m above the cars' height so the player drops
+onto the road; 60 m east of the game's own player start (69.635, 909.077, -19.634), inside the `italy` city part
+the script waits for. **UNVERIFIED** (street or pavement, traffic at the spot, heading).
+
+**Checked without the game** (`tests/freeride_test.cpp`): the game's FreerideScript chunk reads and writes back
+byte-identically and passes our version of the Lua 5.1 loader's code checks; it runs in a tiny test VM against a
+recording mock of the game's API with the calls its listing shows (part 5: `SaveGame(1)`, `CheatAddCar`, Joe, winter
+line, snow preset, season 50) - which checks the VM against real compiler output; our script runs in the same VM for
+parts 0-7 with exactly the expected calls in order; our C++ lister and the independent Python lister used for this
+research (`luadis.py`, written from the public Lua 5.1 format) give the same function headers and instruction
+sequences for our chunk (267 instructions) and the game's (1380).
+
+Still **UNVERIFIED in game**: that the debug mission still loads in the DE (assets, the "Free Raid" stream-map
+lines), that the game accepts our script resource (its size and word are kept; content changes of the same size
+were accepted for XML), what the game manager does with mission 0 type 0 (a "new game" style load: whether the
+engine itself autosaves anywhere), traffic / police / shops in the loaded city, the start position.

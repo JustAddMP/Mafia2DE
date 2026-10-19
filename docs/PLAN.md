@@ -1,7 +1,7 @@
 # Plan - next steps
 
 Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-19
-(FREE RIDE entry on the CO-OP pages; Free Ride research, re-notes.md 5). Read with `re-notes.md` (what we
+(Free Ride code written, single player, waiting for an in-game test: D-FR; re-notes.md 5.1). Read with `re-notes.md` (what we
 know about the game) and `../README-dev.md` (build, launch, the test checklist).
 
 ## Where we are
@@ -44,7 +44,8 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
   navigation by the game itself. Gate: screenshot of our page next to the game's EXTRAS page - same fonts, colours,
   highlight, footer, sounds. Status 2026-10-18: works with keyboard and mouse and matches EXTRAS (screenshots in the
   test log); still to check: pad navigation and glyphs, the sounds (the test ran muted, no pad). 2026-10-19: FREE
-  RIDE added as the second entry (both pages; does nothing yet), not seen in game yet.
+  RIDE added as the second entry (both pages; does nothing yet), not seen in game yet. Later the same day: the
+  main page's FREE RIDE starts Free Ride (D-FR) and that page's footer A glyph is hidden for good to fit it.
 - [ ] **CO-OP entry in the pause menu** (after OPTIONS) opening the same page in the pause OPTIONS look. Gate: as above
   against the pause OPTIONS page. Status: built (the hidden cheats entry), the archive loads; needs a loaded save.
 - [ ] **Overlay fallback**: F8 opens core's CO-OP panels (only for testing while the native pages are not working;
@@ -94,6 +95,24 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
   exe, unused by any menu) is a cleaner entry; the JA free ride (`gameLine 6`, mission 60) as the alternative
   with Joe as the player; how the guest's game is told which part to load; pause menu behaviour (RETRY / EXIT)
   in a debug mission.
+  Status 2026-10-19 (code written, nothing run in game; not ticked): steps (1) and (2) for single player.
+  - Statically answered (re-notes.md 5.1): `game.mission.load`'s value is the mission **number** (the game's debug
+    part list builds `<use action="game.mission.load" part="\uN" game=GAME gameLine=LINE>NUMBER</use>` from the
+    mission list, whose defaults are game FirstCity and gameLine 1); gameLine 1 = the story's save id = the base
+    game. `game.start operation="FreeRide"` is no route (its hashed name is never compared; it acts like any
+    unknown operation) - not wired.
+  - (1) The main CO-OP page's FREE RIDE runs `game.mission.load` mission 0 part 1 (**Summer Day**, the default):
+    a season picker page does not fit any free screen of the main menu (about 450 bytes per entry; LoadMission
+    is the CO-OP page, MissionParts holds not even one entry). To fit the one action, the CO-OP page's footer A
+    glyph is hidden for good (its pad-only check dropped). FREE RIDE in the pause menu does nothing yet.
+  - (2) `freeraid_main.sds` is served through the archive redirect with our own script (`src/game/freeride.cpp`,
+    compiled by our Lua 5.1 / 4-byte-float compiler `src/game/lua51_compile.cpp`): no SaveGame, no Joe / Henry,
+    no chase cars, no garage fill, police on, start at (129.164, 917.259, -21.260) on the street of the game's
+    test cars; resource size and prefix word kept. Tests: `freeride_test` (format, compiler, our script run in a
+    test VM for every part, the real archive), `menu_patch_test` (the FREE RIDE action, the footer).
+  - Next: the in-game check (README-dev "Free Ride"), then a season picker (needs a bigger host screen or shared
+    strings in the binary XML - check whether the game's binary XML reader resolves string offsets freely),
+    FREE RIDE from the pause menu, then step (3).
 - [ ] Time of day / weather, story progress (chapters, checkpoints, objectives), cutscenes, mission NPCs and cars,
   traffic and police, items. Research first, as for Mafia DE (docs/research-world-sync.md there).
 
