@@ -1,6 +1,7 @@
 #include "game/menu_patch.h"
 
 #include "game/bxml.h"
+#include "game/freeride.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -33,6 +34,13 @@ constexpr char kMainTplLayout[] = "/config/gui/ScreenLayouts/Extras";
 constexpr char kMainHostScreen[] = "/config/gui/Screens/MainMenu/LoadMission";
 constexpr char kMainHostLayout[] = "/config/gui/ScreenLayouts/LoadMission";
 constexpr char kMainHostLayoutName[] = "LoadMission";
+
+// The main CO-OP page's FREE RIDE entry starts Free Ride directly with the default preset (Summer Day). A season
+// picker page does not fit any free screen of the main menu: each preset entry with its loader action costs about
+// 450 bytes of screen data, and the only unused screens are LoadMission (3142 bytes, the CO-OP page) and the debug
+// part list MissionParts (1861 bytes, too small for even one entry next to the page's frame and footer). Planned
+// (docs/PLAN.md D-FR).
+constexpr char kFreeRideLabel[] = "FREE RIDE";
 
 // Pause menu: the hidden cheats entry (btnCheats, right after OPTIONS, hidden by condition 130) becomes CO-OP; its
 // screen Cheats becomes the CO-OP page, built from the pause menu's OPTIONS page.
@@ -120,17 +128,66 @@ double RowHeight(Node* widget) {
     return h > 0.01 ? h : 0.062;
 }
 
-// The screen-side widget entry of a list button: hovering selects it (as the game's own entries do).
-std::unique_ptr<Node> MakeScreenWidget(const std::string& name, const std::string& list) {
+// The screen-side widget entry of a list button: hovering selects it (as the game's own entries do); `use` (optional)
+// is what selecting it does, placed before the hover event as on the game's EXTRAS page.
+std::unique_ptr<Node> MakeScreenWidget(const std::string& name, const std::string& list, const Node* use = nullptr) {
     auto w = std::make_unique<Node>();
     w->name = "widget";
     w->SetAttr("name", name);
-    Node& co = w->Add("events").Add("cursor-over");
+    Node& ev = w->Add("events");
+    if (use) ev.children.push_back(use->Clone());
+    Node& co = ev.Add("cursor-over");
     co.SetAttr("action", "container.selectItem");
     co.SetAttr("widget", list);
     co.hasText = true;
     co.text = name;
     return w;
+}
+
+// FREE RIDE: the game's own mission loader for the base game's FREE RIDE debug mission, exactly as the game's debug
+// mission list (menu.mission.fillpartlist) builds it for a part: the value is the mission's number, `part` the part's
+// number, `game` and `gameLine` the mission's (defaults FirstCity and 1: the free ride mission sets neither); see
+// docs/re-notes.md 5 for the evidence in the exe.
+std::unique_ptr<Node> FreeRideUse(unsigned part) {
+    auto u = std::make_unique<Node>();
+    u->name = "use";
+    u->SetAttr("action", "game.mission.load");
+    u->SetAttr("part", "\\u" + std::to_string(part));
+    u->SetAttr("game", std::string("\\s") + freeride::kGame);
+    u->SetAttr("gameLine", "\\u" + std::to_string(freeride::kGameLine));
+    u->hasText = true;
+    u->text = "\\u" + std::to_string(freeride::kMission);
+    return u;
+}
+
+// A page: its title, its list entries (label + what selecting it does, or nothing), the entries' widget name prefix
+// and a short one for when the host screen is tight.
+struct PageEntry {
+    std::string label;
+    const Node* use = nullptr;
+};
+struct PageSpec {
+    std::string title;
+    std::vector<PageEntry> entries;
+    std::string prefix, shortPrefix;
+};
+
+// How the page's widgets are named: the entries' name prefix and (if not empty) a new name for the list widget.
+// Shorter names leave room in a small host screen for the entries' actions. `noPadGlyph`: the footer's A glyph
+// (imgA) is hidden for good instead of shown only while a controller is used - its controller check is the screen
+// data that goes (about 250 bytes); keyboard and mouse see no difference (the glyph is hidden for them anyway), a pad
+// sees SELECT without the A glyph.
+struct PageStyle {
+    std::string entryPrefix;
+    std::string listName;
+    bool noPadGlyph = false;
+};
+
+void RenameValues(Node* n, const std::string& from, const std::string& to) {
+    for (auto& [k, v] : n->attrs)
+        if (v == from) v = to;
+    if (n->hasText && n->text == from) n->text = to;
+    for (auto& ch : n->children) RenameValues(ch.get(), from, to);
 }
 
 struct Res {
@@ -293,6 +350,7 @@ bool FitScreen(Ctx& c, Res& r, size_t target) {
             if (nm->size() < 160) e->SetAttr("name", *nm + "x");
         }
     if (Size(r) == target) return true;
+    c.res.dumps.emplace_back(r.res->sourceName + " (does not fit)", bxml::ToText(*r.doc.root));
     return c.Fail(r.res->sourceName + ": cannot keep its size (" + std::to_string(Size(r)) + " vs " +
                   std::to_string(target) + " bytes)");
 }
@@ -342,13 +400,14 @@ bool RepurposeEntry(Ctx& c, Res& screen, Res& layout, const char* list, const ch
     return true;
 }
 
-// Builds the CO-OP page into a host screen/layout pair from a template page (a screen + its layout): same look; the
-// title says CO-OP; the list holds our entries; Esc / B / the footer's BACK go back to the menu. Both host resources
-// keep their size; the host layout keeps its root widget name.
+// Builds a page (the CO-OP page, the FREE RIDE page) into a host screen/layout pair from a template page (a screen +
+// its layout): same look; the title and the list entries are the spec's; Esc / B / the footer's BACK go back. Both
+// host resources keep their size; the host layout keeps its root widget name.
 // `nameExtra` lengthens the entries' widget names (invisible) by that many characters in all: BuildPage's last
 // resort when the screen is a few bytes short and too tight for one more padding event.
 bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
-                   Res& hostLayout, const char* hostLayoutName, size_t nameExtra) {
+                   Res& hostLayout, const char* hostLayoutName, size_t nameExtra, const PageStyle& style,
+                   const PageSpec& spec) {
     const size_t screenSize = hostScreen.res->data.size(), layoutSize = hostLayout.res->data.size();
     // ---- layout ----
     auto layout = tplLayout.root->Clone();
@@ -364,7 +423,7 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
     if (!title) return c.Fail("template layout has no stTitle* text");
     if (Node* props = title->Child("properties"))
         if (Node* t = props->Child("text")) {
-            t->SetAttr("text", kCoopLabel);
+            t->SetAttr("text", spec.title);
             t->SetAttr("textid", "0");
         }
     Node* lb = FindIf(layout.get(), [](Node* n) {
@@ -373,23 +432,36 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
     });
     Node* items = lb ? lb->Child("items") : nullptr;
     if (!items || items->children.empty()) return c.Fail("template layout has no list");
-    const std::string list = *lb->Attr("name");
+    const std::string tplList = *lb->Attr("name");
+    const std::string list = style.listName.empty() ? tplList : style.listName;
+    lb->SetAttr("name", list);
     std::vector<std::string> tplItems;
     for (const auto& it : items->children)
         if (const std::string* nm = it->Attr("name")) tplItems.push_back(*nm);
     const auto tplButton = items->children.front()->Clone();
     const double row = RowHeight(tplButton.get());
+    if (style.noPadGlyph) {
+        Node* glyph = FindIf(layout.get(), [](Node* n) {
+            const std::string* nm = n->Attr("name");
+            return n->name == "widget" && nm && *nm == "imgA";
+        });
+        Node* props = glyph ? glyph->Child("properties") : nullptr;
+        Node* cd = props ? props->Child("commondata") : nullptr;
+        if (!cd) return c.Fail("template layout has no imgA glyph to hide");
+        cd->SetAttr("visible", "false");
+    }
     items->children.clear();
-    const auto& entries = CoopEntries();
+    const auto& entries = spec.entries;
     std::vector<std::string> names;
     for (size_t i = 0; i < entries.size(); ++i) {
         const size_t n = entries.size(), extra = nameExtra / n + (i < nameExtra % n ? 1 : 0);
-        names.push_back("btnCoop" + std::to_string(i) + std::string(extra, 'x'));
-        items->children.push_back(MakeButton(*tplButton, names.back(), entries[i], row * static_cast<double>(i)));
+        names.push_back(style.entryPrefix + std::to_string(i) + std::string(extra, 'x'));
+        items->children.push_back(MakeButton(*tplButton, names.back(), entries[i].label, row * static_cast<double>(i)));
     }
 
     // ---- screen ----
     auto screen = tplScreen.root->Clone();
+    if (list != tplList) RenameValues(screen.get(), tplList, list);  // the list's own entry, the footer's SELECT
     Node* config = screen->Child("config");
     Node* settings = config ? config->Child("settings") : nullptr;
     Node* widgets = config ? config->Child("widgets") : nullptr;
@@ -409,8 +481,14 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
         if (drop) w.erase(w.begin() + static_cast<std::ptrdiff_t>(i));
         else ++i;
     }
+    if (style.noPadGlyph)
+        for (size_t i = 0; i < w.size(); ++i)
+            if (const std::string* nm = w[i]->Attr("name"); nm && *nm == "imgA") {
+                w.erase(w.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
     size_t at = 0;
-    for (const auto& nm : names) Insert(widgets, at++, MakeScreenWidget(nm, list));
+    for (size_t i = 0; i < names.size(); ++i) Insert(widgets, at++, MakeScreenWidget(names[i], list, entries[i].use));
     if (Node* back = Widget(widgets, "btnBack")) {
         Node* ev = back->Child("events");
         if (!ev) ev = &back->Add("events");
@@ -452,20 +530,35 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
 }
 
 bool BuildPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
-               Res& hostLayout, const char* hostLayoutName) {
+               Res& hostLayout, const char* hostLayoutName, const PageSpec& spec) {
+    // the template's names first; shorter ones only if the host screen is too small for them
+    const PageStyle styles[] = {{spec.prefix, "", false}, {spec.prefix, "l", false}, {spec.shortPrefix, "l", false},
+                                {spec.prefix, "", true}, {spec.shortPrefix, "l", true}};
     constexpr size_t kMaxNameExtra = 48;
-    for (size_t extra = 0;; ++extra) {
-        Result attempt;
-        Ctx a{attempt};
-        const bool ok = BuildPageOnce(a, tplScreen, tplLayout, hostScreen, hostLayout, hostLayoutName, extra);
-        if (ok || extra == kMaxNameExtra) {
-            if (ok && extra)
-                a.Log(hostScreen.res->sourceName + ": entry names " + std::to_string(extra) +
-                      " character(s) longer to keep its size");
-            c.res.log.insert(c.res.log.end(), attempt.log.begin(), attempt.log.end());
-            return ok;
+    Result last;
+    for (const PageStyle& style : styles) {
+        for (size_t extra = 0; extra <= kMaxNameExtra; ++extra) {
+            Result attempt;
+            Ctx a{attempt};
+            if (BuildPageOnce(a, tplScreen, tplLayout, hostScreen, hostLayout, hostLayoutName, extra, style, spec)) {
+                if (!style.listName.empty() || style.entryPrefix != styles[0].entryPrefix)
+                    a.Log(hostScreen.res->sourceName + ": entries named " + style.entryPrefix + "<n>" +
+                          (style.listName.empty() ? "" : ", list named " + style.listName) + " to keep its size");
+                if (style.noPadGlyph)
+                    a.Log(hostScreen.res->sourceName + ": the footer's A glyph hidden for good (its controller check "
+                          "dropped to keep the size; a pad sees SELECT without the glyph)");
+                if (extra)
+                    a.Log(hostScreen.res->sourceName + ": entry names " + std::to_string(extra) +
+                          " character(s) longer to keep its size");
+                c.res.log.insert(c.res.log.end(), attempt.log.begin(), attempt.log.end());
+                return true;
+            }
+            last = std::move(attempt);
         }
     }
+    c.res.log.insert(c.res.log.end(), last.log.begin(), last.log.end());
+    c.res.dumps.insert(c.res.dumps.end(), last.dumps.begin(), last.dumps.end());  // the tree that did not fit
+    return false;
 }
 
 }  // namespace
@@ -486,7 +579,16 @@ Result PatchGuiMain(sds::Archive& a) {
         !ReadDoc(c, a, kMainTplScreen, tplScreen) || !ReadDoc(c, a, kMainTplLayout, tplLayout))
         return res;
     if (!RepurposeEntry(c, screen, layout, kMainList, kMainEntry)) return res;
-    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName)) return res;
+
+    // the CO-OP page; its FREE RIDE entry starts Free Ride (the default preset)
+    const auto load = FreeRideUse(freeride::kDefaultPart);
+    PageSpec coop{kCoopLabel, {}, "btnCoop", "b"};
+    for (const auto& e : CoopEntries()) coop.entries.push_back({e, e == kFreeRideLabel ? load.get() : nullptr});
+    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName, coop)) return res;
+    const freeride::Preset* p = freeride::PresetOf(freeride::kDefaultPart);
+    c.Log(std::string("FREE RIDE -> game.mission.load mission ") + std::to_string(freeride::kMission) + " part " +
+          std::to_string(freeride::kDefaultPart) + " (" + (p ? p->label : "?") + "), game " + freeride::kGame +
+          ", gameLine " + std::to_string(freeride::kGameLine));
     for (Res* r : {&screen, &layout, &hostScreen, &hostLayout}) Store(c, *r);
     res.ok = true;
     return res;
@@ -502,7 +604,9 @@ Result PatchGui(sds::Archive& a, const sds::Archive& guiMain) {
         !ReadDoc(c, a, kPauseTplScreen, tplScreen) || !ReadDoc(c, guiMain, kPauseTplLayout, tplLayout))
         return res;
     if (!RepurposeEntry(c, screen, layout, kPauseList, kPauseEntry)) return res;
-    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kPauseHostLayoutName)) return res;
+    PageSpec coop{kCoopLabel, {}, "btnCoop", "b"};
+    for (const auto& e : CoopEntries()) coop.entries.push_back({e, nullptr});
+    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kPauseHostLayoutName, coop)) return res;
     for (Res* r : {&screen, &layout, &hostScreen, &hostLayout}) Store(c, *r);
     res.ok = true;
     return res;

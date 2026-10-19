@@ -11,7 +11,11 @@
 // keeps its exact size: the CO-OP entries are the menus' hidden debug entries (main menu: "DEBUG Load Chapter",
 // pause menu: cheats), the CO-OP pages are built into the debug screens they open (LoadMission, Cheats), and the
 // resources are padded back to size (docs/re-notes.md 4). The daemons are untouched.
-// The entries on the CO-OP pages do nothing yet (menu-only build).
+// FREE RIDE on the main menu's CO-OP page starts Free Ride: the game's own mission loader for the base game's FREE
+// RIDE debug mission (game.mission.load, mission 0, part 1 = Summer Day; game/freeride.h). Its loader action costs
+// screen data the page's host screen does not have, so - only if needed - the footer's A glyph is hidden for good
+// instead of shown while a controller is used (its controller check is dropped). The other entries, and FREE RIDE in
+// the pause menu, do nothing yet.
 #include "game/sds.h"
 
 #include <string>

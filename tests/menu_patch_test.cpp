@@ -6,9 +6,12 @@
 //     written; the patched archives must read back, have the CO-OP entry in the main menu (the former hidden debug
 //     entry after STORY) and the pause menu (the former hidden cheats entry after OPTIONS), the two CO-OP pages with
 //     our six entries (HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS, in that order, each
-//     button a copy of the template list's own button) in the debug screens those entries open, every changed resource exactly as big as before with
-//     its prefix word unchanged (the game drops the whole archive otherwise - seen in game), and every other
-//     resource byte-identical.
+//     button a copy of the template list's own button) in the debug screens those entries open, the main page's FREE
+//     RIDE entry running the game's mission loader for the free ride mission (game.mission.load, mission 0 part 1,
+//     FirstCity, gameLine 1 - docs/re-notes.md 5) and no other entry doing anything, the footer kept (BACK, SELECT;
+//     the A glyph either with its controller check or hidden for good), every changed resource exactly as big as
+//     before with its prefix word unchanged (the game drops the whole archive otherwise - seen in game), and every
+//     other resource byte-identical.
 //     The patched archives and reports go to out\menu_patch\ for inspection. Game folder: env M2_GAME_DIR (the
 //     folder that holds pc\), else the default Steam library paths; skipped (not failed) when not found.
 // Exits non-zero on any failure.
@@ -298,6 +301,8 @@ void TestGameFiles(const std::wstring& outDir) {
     const auto r1 = menu_patch::PatchGuiMain(main);
     for (const auto& l : r1.log) std::printf("      gui-main: %s\n", l.c_str());
     Check(r1.ok, "game: gui-main.sds patched");
+    if (!r1.ok)
+        for (const auto& [n, x] : r1.dumps) std::printf("<!-- %s -->\n%s\n", n.c_str(), x.c_str());
     const auto r2 = menu_patch::PatchGui(g, mainOrig);
     for (const auto& l : r2.log) std::printf("      gui: %s\n", l.c_str());
     Check(r2.ok, "game: gui.sds patched");
@@ -339,6 +344,29 @@ void TestGameFiles(const std::wstring& outDir) {
     Check(Has(pageScreen, "<definition>\\sLoadMission</definition>") && Has(pageScreen, "<cancel action=\"screen.back\"/>") &&
               Has(pageScreen, "<focus>btnCoop0") && !Has(pageScreen, "menu.mission"),
           "main CO-OP page screen: its layout, Esc = back, focus on the first entry", pageScreen);
+    {   // FREE RIDE starts the free ride mission through the game's own mission loader (docs/re-notes.md 5)
+        const std::string load = "<use action=\"game.mission.load\" part=\"\\u1\" game=\"\\sFirstCity\" gameLine=\"\\u1\">\\u0</use>";
+        const size_t label = page.find("text=\"FREE RIDE\"");
+        const size_t lp = label == std::string::npos ? std::string::npos : page.rfind("<widget name=\"btnCoop", label);
+        std::string rideName;
+        if (lp != std::string::npos) rideName = page.substr(lp + 14, page.find('"', lp + 14) - lp - 14);
+        const size_t sw = rideName.empty() ? std::string::npos : pageScreen.find("<widget name=\"" + rideName + "\">");
+        const size_t next = sw == std::string::npos ? sw : pageScreen.find("</widget>", sw);
+        Check(!rideName.empty() && sw != std::string::npos && Count(pageScreen, "game.mission.load") == 1 &&
+                  pageScreen.find(load, sw) < next && pageScreen.find("<cursor-over", sw) < next,
+              "main CO-OP page: FREE RIDE (" + rideName + ") = game.mission.load mission 0 part 1, FirstCity, gameLine 1; hover kept",
+              pageScreen);
+        Check(Count(pageScreen, "<use action=") == 3,
+              "main CO-OP page: no other entry does anything yet (uses: FREE RIDE, BACK, SELECT)", pageScreen);
+    }
+    {   // the footer: B BACK unchanged; the A glyph hidden for good if its controller check had to go for the size
+        const bool glyphCheck = Has(pageScreen, "<widget name=\"imgA\">");
+        const size_t ia = page.find("<widget name=\"imgA\"");
+        const bool hidden = ia != std::string::npos && Has(page.substr(ia, 300), "visible=\"false\"");
+        Check(glyphCheck != hidden && Has(pageScreen, "<widget name=\"btnAccept\">") && Has(pageScreen, "container.notifySelectedItem") &&
+                  Has(pageScreen, "<widget name=\"btnBack\">"),
+              std::string("main CO-OP page footer: BACK and SELECT kept; A glyph ") + (glyphCheck ? "shown for a pad (controller check kept)" : "hidden for good (controller check dropped for the size)"));
+    }
 
     // pause menu: the hidden cheats entry after OPTIONS is now CO-OP
     const std::string gm = Text(backGui, "/config/gui/ScreenLayouts/GameMenu");
@@ -356,6 +384,7 @@ void TestGameFiles(const std::wstring& outDir) {
     const std::string ps = Text(backGui, "/config/gui/Screens/GameMenu/Cheats");
     Check(Has(ps, "<definition>\\sCheats</definition>") && !Has(ps, "options.back") && !Has(ps, "game.cheat"),
           "pause CO-OP page screen: its layout, plain back, no cheats", ps);
+    Check(!Has(ps, "game.mission.load"), "pause CO-OP page: FREE RIDE does nothing there yet (starting a mission from a running game is not wired)");
     why.clear();
     for (const auto* scr : {&pageScreen, &ps})
         for (int i = 0; i < 6; ++i)

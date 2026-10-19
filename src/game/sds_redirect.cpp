@@ -2,6 +2,7 @@
 
 #include "core/hook.h"
 #include "core/log.h"
+#include "game/freeride.h"
 #include "game/menu_patch.h"
 #include "game/sds.h"
 
@@ -35,14 +36,14 @@ thread_local bool _busy = false;  // our own file access while building (never r
 std::mutex _logMutex;
 std::vector<std::wstring> _sdsOpensLogged;  // each archive path once (the game opens each a few times per probe)
 
-enum class Kind { None, GuiMain, Gui };
+enum class Kind { None, GuiMain, Gui, FreeRide };
 
 struct Built {
     bool tried = false;
     std::wstring path;  // empty: not patched (the game gets its own file)
 };
 std::mutex _mutex;
-Built _built[3];
+Built _built[4];
 
 std::string Narrow(const std::wstring& w) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
@@ -64,7 +65,16 @@ bool EndsWith(const std::wstring& s, const wchar_t* tail) {
 Kind Classify(const std::wstring& lowerPath) {
     if (EndsWith(lowerPath, L"\\sds\\gui\\gui-main.sds")) return Kind::GuiMain;
     if (EndsWith(lowerPath, L"\\sds\\gui\\gui.sds")) return Kind::Gui;
+    // the base game's FREE RIDE mission script (not the DLC's dlc_freeraid_main.sds)
+    if (EndsWith(lowerPath, L"\\sds\\missionscript\\freeraid_main.sds")) return Kind::FreeRide;
     return Kind::None;
+}
+
+// Archives whose opens are always logged (the 200-path cap is reached in the menus already): mission scripts, skies,
+// stream map tables - they show which mission the game loads (the Free Ride route) and with which sky.
+bool AlwaysLog(const std::wstring& lowerPath) {
+    return lowerPath.find(L"\\sds\\missionscript\\") != std::wstring::npos ||
+           lowerPath.find(L"\\sds\\skies\\") != std::wstring::npos;
 }
 
 bool ReadFileAll(const std::wstring& path, std::vector<uint8_t>& out) {
@@ -112,8 +122,61 @@ bool Exists(const std::wstring& path) {
     return ok;
 }
 
+// Writes `out` as <cache>\<pid>-<fileName> after checking that it reads back with `count` resources. "" on failure.
+std::wstring WriteCopy(const wchar_t* fileName, const std::vector<uint8_t>& out, size_t count, const char* what) {
+    sds::Archive check;
+    std::string err;
+    if (!sds::Read(out, check, &err) || check.resources.size() != count) {
+        MC_LOG_WARN("%s: the patched %ls does not read back (%s); the game's own file is used", what, fileName, err.c_str());
+        return {};
+    }
+    const std::wstring path = _cacheDir + L"\\" + std::to_wstring(GetCurrentProcessId()) + L"-" + fileName;
+    if (!WriteFileAll(path, out.data(), out.size())) {
+        MC_LOG_WARN("%s: cannot write %s (%lu); the game's own file is used", what, Narrow(path).c_str(), GetLastError());
+        return {};
+    }
+    return path;
+}
+
+// freeraid_main.sds, the FREE RIDE mission's script archive: our Free Ride script in place of the game's
+// (game/freeride.h). The game opens it when the FREE RIDE mission loads - the CO-OP page's FREE RIDE entry starts it
+// through the game's mission loader (game.mission.load, mission 0) - so this is where the route shows in the log.
+std::wstring BuildFreeRide(const std::wstring& requested) {
+    const std::wstring original = FullPath(requested);
+    const ULONGLONG t0 = GetTickCount64();
+    MC_LOG_INFO("freeride: the game loads the FREE RIDE mission's script archive %s (route: the FREE RIDE entry -> "
+                "game.mission.load mission %u -> the stream map's \"Free Raid\" game)",
+                Narrow(original).c_str(), freeride::kMission);
+    std::vector<uint8_t> raw;
+    sds::Archive a;
+    std::string err;
+    if (!ReadFileAll(original, raw) || !sds::Read(raw, a, &err)) {
+        MC_LOG_WARN("freeride: cannot read %s (%s); the game's own free ride script runs (it saves into slot 1!)",
+                    Narrow(original).c_str(), err.c_str());
+        return {};
+    }
+    const freeride::Result r = freeride::PatchArchive(a);
+    for (const auto& l : r.log) MC_LOG_INFO("freeride: %s", l.c_str());
+    std::string report;
+    for (const auto& l : r.log) report += "# " + l + "\n";
+    report += "\n-- our script --\n" + freeride::Source() + "\n-- compiled (lua51::List) --\n" + r.listing;
+    WriteFileAll(_cacheDir + L"\\" + std::to_wstring(GetCurrentProcessId()) + L"-freeraid_main.sds.patch.txt",
+                 report.data(), report.size());
+    if (!r.ok) {
+        MC_LOG_WARN("freeride: not patched; the game's own free ride script runs (it saves into slot 1!)");
+        return {};
+    }
+    const std::wstring path = WriteCopy(L"freeraid_main.sds", sds::Write(a), a.resources.size(), "freeride");
+    if (!path.empty())
+        MC_LOG_INFO("freeride: our Free Ride script ready in %llu ms -> %s", GetTickCount64() - t0, Narrow(path).c_str());
+    else
+        MC_LOG_WARN("freeride: the game's own free ride script runs (it saves into slot 1!)");
+    return path;
+}
+
 // Builds the patched copy of `requested` (GuiMain or Gui) and returns its path, or "" (logged) on any failure.
 std::wstring Build(Kind kind, const std::wstring& requested) {
+    if (kind == Kind::FreeRide) return BuildFreeRide(requested);
     const std::wstring original = FullPath(requested);
     const std::wstring dir = original.substr(0, original.find_last_of(L'\\'));
     const wchar_t* fileName = kind == Kind::GuiMain ? L"gui-main.sds" : L"gui.sds";
@@ -175,7 +238,7 @@ std::wstring Redirect(const std::wstring& path) {
         std::lock_guard lock(_logMutex);
         bool seen = false;
         for (const auto& p : _sdsOpensLogged) seen |= p == lower;
-        if (!seen && _sdsOpensLogged.size() < 200) {
+        if (!seen && (_sdsOpensLogged.size() < 200 || AlwaysLog(lower))) {
             _sdsOpensLogged.push_back(lower);
             MC_LOG_INFO("sds: game opens %s", Narrow(path).c_str());
         }

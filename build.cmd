@@ -46,9 +46,11 @@ echo [build] lib m2_ui.lib
 lib /NOLOGO /OUT:"%OBJ%\m2_ui.lib" "%OBJ%\minhook\*.obj" "%OBJ%\core\*.obj" "%OBJ%\render\*.obj" ^
   "%OBJ%\dll\coop.obj" "%OBJ%\dll\coop_ui.obj" "%OBJ%\dll\mod.obj" "%OBJ%\dll\ui_input.obj"
 if errorlevel 1 ( echo [build] ERROR: lib m2_ui.lib failed & goto :fail )
-rem m2_game.lib: the game-free parts of src\game the tests use (archives, binary XML, inflate, the menu patch)
+rem m2_game.lib: the game-free parts of src\game the tests use (archives, binary XML, inflate, the menu patch, Lua
+rem chunks and our compiler, script resources, Free Ride)
 lib /NOLOGO /OUT:"%OBJ%\m2_game.lib" "%OBJ%\game\sds.obj" "%OBJ%\game\bxml.obj" "%OBJ%\game\inflate.obj" ^
-  "%OBJ%\game\menu_patch.obj"
+  "%OBJ%\game\menu_patch.obj" "%OBJ%\game\lua51.obj" "%OBJ%\game\lua51_compile.obj" "%OBJ%\game\script_res.obj" ^
+  "%OBJ%\game\freeride.obj"
 if errorlevel 1 ( echo [build] ERROR: lib m2_game.lib failed & goto :fail )
 
 echo [build] link mafia2coop.dll
