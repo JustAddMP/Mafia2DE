@@ -8,7 +8,9 @@
 //     our six entries (HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS, in that order, each
 //     button a copy of the template list's own button) in the debug screens those entries open, the main page's FREE
 //     RIDE entry running the game's mission loader for the free ride mission (game.mission.load, mission 0 part 1,
-//     FirstCity, gameLine 1 - docs/re-notes.md 5) and no other entry doing anything, the footer kept (BACK, SELECT;
+//     FirstCity, gameLine 1 - docs/re-notes.md 5) and no other entry doing anything, the main menu's own FREE RIDE
+//     entry (right after CO-OP, in place of the hidden promotion button: order, a game entry's style, one row apart,
+//     the same Free Ride start as the page's FREE RIDE, exact sizes), the footer kept (BACK, SELECT;
 //     the A glyph either with its controller check or hidden for good), every changed resource exactly as big as
 //     before with its prefix word unchanged (the game drops the whole archive otherwise - seen in game), and every
 //     other resource byte-identical.
@@ -272,6 +274,123 @@ bool SameButtons(sds::Archive& page, const char* pageLayout, sds::Archive& tplAr
     return true;
 }
 
+// The element (with its children) that starts at `open` in a ToText dump, up to its closing tag.
+std::string Element(const std::string& text, const std::string& open, const std::string& close) {
+    const size_t p = text.find(open);
+    if (p == std::string::npos) return {};
+    const size_t e = text.find(close, p);
+    return e == std::string::npos ? std::string{} : text.substr(p, e + close.size() - p);
+}
+
+// FREE RIDE in the main menu itself: right after CO-OP, the same style as the game's own entries, the same Free Ride
+// start as the main CO-OP page's FREE RIDE, in place of the hidden promotion button; both resources keep their size.
+void TestMainFreeRide(sds::Archive& mainOrig, sds::Archive& backMain, const std::string& pageScreen) {
+    const char* kLayout = "/config/gui/ScreenLayouts/MainMenu";
+    const char* kScreen = "/config/gui/Screens/MainMenu/MainMenu";
+    bxml::Document ld, od;
+    sds::Resource* lr = backMain.Find(kLayout);
+    sds::Resource* orr = mainOrig.Find(kLayout);
+    if (!lr || !orr || !bxml::Read(lr->data, ld, nullptr) || !bxml::Read(orr->data, od, nullptr)) {
+        Check(false, "main menu FREE RIDE: layouts readable");
+        return;
+    }
+    bxml::Node* lb = ld.root->FindByAttr("widget", "name", "listboxMainMenu");
+    bxml::Node* olb = od.root->FindByAttr("widget", "name", "listboxMainMenu");
+    bxml::Node* items = lb ? lb->Child("items") : nullptr;
+    bxml::Node* oitems = olb ? olb->Child("items") : nullptr;
+    if (!items || !oitems) {
+        Check(false, "main menu FREE RIDE: listboxMainMenu found");
+        return;
+    }
+    // order: THE STORY, CO-OP, FREE RIDE, ADDITIONAL CONTENT, EXTRAS, OPTIONS, EXIT (and nothing else)
+    const std::vector<std::string> order = {"btnStory", "btnLoadMission", "btnFreeRide", "btnDownloadableContent",
+                                            "btnExtras", "btnOptions", "btnExit"};
+    std::string names;
+    for (const auto& it : items->children) names += (it->Attr("name") ? *it->Attr("name") : "?") + " ";
+    std::string want;
+    for (const auto& n : order) want += n + " ";
+    Check(names == want, "main menu: STORY, CO-OP, FREE RIDE, ADDITIONAL CONTENT, EXTRAS, OPTIONS, EXIT (promo button gone)", names);
+
+    // FREE RIDE: the label; the game entry's skin, colours, font / text format, size, metrics; visible, not frozen
+    bxml::Node* fr = items->FindByAttr("widget", "name", "btnFreeRide");
+    bxml::Node* tpl = oitems->FindByAttr("widget", "name", "btnDownloadableContent");
+    bxml::Node* coop = items->FindByAttr("widget", "name", "btnLoadMission");
+    bxml::Node* fp = fr ? fr->Child("properties") : nullptr;
+    bxml::Node* tp = tpl ? tpl->Child("properties") : nullptr;
+    bxml::Node* cp = coop ? coop->Child("properties") : nullptr;
+    std::string why;
+    auto sameNode = [](bxml::Node* x, bxml::Node* y) {
+        if ((x == nullptr) != (y == nullptr)) return false;
+        if (!x) return true;
+        if (x->attrs.size() != y->attrs.size()) return false;
+        for (size_t a = 0; a < x->attrs.size(); ++a)
+            if (x->attrs[a].first != y->attrs[a].first ||
+                (x->attrs[a].second != y->attrs[a].second && Num(&x->attrs[a].second) != Num(&y->attrs[a].second)))
+                return false;
+        return true;
+    };
+    if (!fp || !tp || !cp) why = "buttons missing";
+    for (const char* k : {"skin", "color", "textformat", "size", "metrics", "hierarchy", "dock"})
+        if (why.empty() && (!sameNode(fp->Child(k), tp->Child(k)) || !sameNode(fp->Child(k), cp->Child(k))))
+            why = std::string(k) + " differs from ADDITIONAL CONTENT / CO-OP";
+    if (why.empty()) {
+        bxml::Node* t = fp->Child("text");
+        bxml::Node* cd = fp->Child("commondata");
+        if (!t || !t->Attr("text") || *t->Attr("text") != "FREE RIDE" || !t->Attr("textid") || *t->Attr("textid") != "0")
+            why = "label";
+        else if (!cd || !cd->Attr("visible") || *cd->Attr("visible") != "true" || !cd->Attr("disabled") ||
+                 *cd->Attr("disabled") != "false")
+            why = "hidden or disabled";
+        else if (fp->Child("freeze"))
+            why = "frozen";
+        else if (!sameNode(fp->Child("tooltip"), cp->Child("tooltip")))
+            why = "tooltip is not CO-OP's";
+    }
+    Check(why.empty(), "main menu FREE RIDE: literal label, a game entry's skin, font, colours, size; visible", why);
+
+    // rows: entry i at i * row height (no gap, no overlap), the list tall enough for all seven
+    why.clear();
+    const double row = Num(tp && tp->Child("size") ? tp->Child("size")->Attr("y") : nullptr);
+    for (size_t i = 0; i < items->children.size(); ++i) {
+        bxml::Node* p = items->children[i]->Child("properties");
+        bxml::Node* pos = p ? p->Child("position") : nullptr;
+        bxml::Node* sz = p ? p->Child("size") : nullptr;
+        const double y = Num(pos ? pos->Attr("y") : nullptr), h = Num(sz ? sz->Attr("y") : nullptr);
+        if (std::abs(y - row * static_cast<double>(i)) > 0.0002 || std::abs(h - row) > 0.0002) why += order[i] + " ";
+    }
+    bxml::Node* lp = lb->Child("properties");
+    const double listH = Num(lp && lp->Child("size") ? lp->Child("size")->Attr("y") : nullptr);
+    if (row * static_cast<double>(items->children.size()) > listH) why += "list too short";
+    Check(row > 0.01 && why.empty(), "main menu: every entry one row (" + std::to_string(row) + ") under the one above", why);
+
+    // the screen: FREE RIDE does exactly what the CO-OP page's FREE RIDE does; hover selects it; promo events gone
+    const std::string ms = Text(backMain, kScreen);
+    const std::string frw = Element(ms, "<widget name=\"btnFreeRide\">", "</widget>");
+    const std::string load = "<use action=\"game.mission.load\" part=\"\\u1\" game=\"\\sFirstCity\" gameLine=\"\\u1\">\\u0</use>";
+    const size_t pu = pageScreen.find("<use action=\"game.mission.load\"");
+    const std::string pageUse = pu == std::string::npos ? std::string{} : pageScreen.substr(pu, pageScreen.find("</use>", pu) + 6 - pu);
+    Check(Has(frw, load) && pageUse == load && Count(ms, "game.mission.load") == 1 &&
+              Has(frw, "<cursor-over action=\"container.selectItem\" widget=\"listboxMainMenu\">btnFreeRide</cursor-over>") &&
+              frw.find("<use ") < frw.find("<cursor-over"),
+          "main menu FREE RIDE: the CO-OP page's Free Ride start (game.mission.load mission 0 part 1), hover selects it", frw);
+    Check(ms.find("<widget name=\"btnLoadMission\">") < ms.find("<widget name=\"btnFreeRide\">") &&
+              ms.find("<widget name=\"btnFreeRide\">") < ms.find("<widget name=\"btnDownloadableContent\">") &&
+              !Has(ms, "btnPromoAction") && !Has(ms, "promo.") && !Has(frw, "menu.visibility"),
+          "main menu screen: FREE RIDE after CO-OP, always shown, the promo button's events gone");
+    Check(Has(ms, "<use action=\"container.notifySelectedItem\" widget=\"listboxMainMenu\">use</use>") &&
+              Has(ms, "<cancel action=\"screen.activate\" operation=\"set\">Startup</cancel>"),
+          "main menu screen: SELECT (A / Enter) still uses the selected entry, Esc still goes back");
+
+    // exact sizes and prefix words of both main menu resources
+    for (const char* name : {kScreen, kLayout}) {
+        sds::Resource* a = mainOrig.Find(name);
+        sds::Resource* b = backMain.Find(name);
+        const bool ok = a && b && a->data.size() == b->data.size() && std::memcmp(a->data.data(), b->data.data(), 4) == 0;
+        Check(ok, std::string("main menu: ") + name + " keeps its " + (a ? std::to_string(a->data.size()) : "?") + " bytes",
+              b ? std::to_string(b->data.size()) : "missing");
+    }
+}
+
 void TestGameFiles(const std::wstring& outDir) {
     const std::wstring game = FindGameDir();
     if (game.empty()) {
@@ -367,6 +486,8 @@ void TestGameFiles(const std::wstring& outDir) {
                   Has(pageScreen, "<widget name=\"btnBack\">"),
               std::string("main CO-OP page footer: BACK and SELECT kept; A glyph ") + (glyphCheck ? "shown for a pad (controller check kept)" : "hidden for good (controller check dropped for the size)"));
     }
+
+    TestMainFreeRide(mainOrig, backMain, pageScreen);
 
     // pause menu: the hidden cheats entry after OPTIONS is now CO-OP
     const std::string gm = Text(backGui, "/config/gui/ScreenLayouts/GameMenu");

@@ -41,6 +41,10 @@ constexpr char kMainHostLayoutName[] = "LoadMission";
 // part list MissionParts (1861 bytes, too small for even one entry next to the page's frame and footer). Planned
 // (docs/PLAN.md D-FR).
 constexpr char kFreeRideLabel[] = "FREE RIDE";
+// The main menu's own FREE RIDE entry (right after CO-OP, the same loader action) and the hidden promotion button
+// whose place it takes (AddMainFreeRide).
+constexpr char kMainFreeRideEntry[] = "btnFreeRide";
+constexpr char kMainPromoEntry[] = "btnPromoAction";
 
 // Pause menu: the hidden cheats entry (btnCheats, right after OPTIONS, hidden by condition 130) becomes CO-OP; its
 // screen Cheats becomes the CO-OP page, built from the pause menu's OPTIONS page.
@@ -400,6 +404,50 @@ bool RepurposeEntry(Ctx& c, Res& screen, Res& layout, const char* list, const ch
     return true;
 }
 
+// The main menu's own FREE RIDE entry, right after CO-OP: a copy of the game entry below CO-OP (ADDITIONAL CONTENT:
+// same skin, font, colours, size, no freeze) with our literal label and CO-OP's tooltip, one row under CO-OP; the
+// entries below move down one row. In the screen it gets `use` (the loader action) and the hover select, as the
+// game's entries have. The main menu has no other hidden entry, and a new button (about 2 KB of layout) does not fit
+// in what trimming numbers gives (about 560 bytes), so the list's promotion button goes: btnPromoAction is invisible
+// in the layout, its screen hides it again on create and only the game's promo service (2K's online promotions, no
+// promo image in the DE's main menu) would show it; its events (promo.registerWidget, promo.highlight,
+// promo.viewPromotion) go with it. gbPromoHighlight (an empty invisible box the exe names) stays.
+bool AddMainFreeRide(Ctx& c, Res& screen, Res& layout, const Node& load) {
+    const size_t screenSize = screen.res->data.size(), layoutSize = layout.res->data.size();
+    Node* lb = Widget(layout.doc.root.get(), kMainList);
+    Node* items = lb ? lb->Child("items") : nullptr;
+    Node* coop = items ? Widget(items, kMainEntry) : nullptr;
+    if (!coop) return c.Fail(std::string("layout: ") + kMainList + " / " + kMainEntry + " not found");
+    Node* promo = Widget(items, kMainPromoEntry);
+    if (!promo) return c.Fail(std::string("layout: ") + kMainPromoEntry + " not found (no room for FREE RIDE)");
+    items->children.erase(items->children.begin() + static_cast<std::ptrdiff_t>(IndexOf(items, promo)));
+    const size_t at = IndexOf(items, coop) + 1;
+    if (at >= items->children.size()) return c.Fail("layout: no game entry after CO-OP");
+    const Node* tpl = items->children[at].get();
+    const double row = RowHeight(coop);
+    Node* coopProps = coop->Child("properties");
+    const double y = AttrNum(coopProps ? coopProps->Child("position") : nullptr, "y") + row;
+    auto btn = MakeButton(*tpl, kMainFreeRideEntry, kFreeRideLabel, y);
+    if (Node* own = btn->Child("properties") ? btn->Child("properties")->Child("tooltip") : nullptr)
+        if (Node* tip = coopProps ? coopProps->Child("tooltip") : nullptr) own->attrs = tip->attrs;
+    for (size_t i = at; i < items->children.size(); ++i)  // the entries below: one row down
+        if (Node* props = items->children[i]->Child("properties"))
+            if (Node* p = props->Child("position")) p->SetAttr("y", Fmt4(AttrNum(p, "y") + row));
+    Insert(items, at, std::move(btn));
+
+    Node* config = screen.doc.root->Child("config");
+    Node* widgets = config ? config->Child("widgets") : nullptr;
+    Node* sw = widgets ? Widget(widgets, kMainEntry) : nullptr;
+    if (!sw) return c.Fail(std::string("screen: widget ") + kMainEntry + " not found");
+    if (Node* sp = Widget(widgets, kMainPromoEntry))
+        widgets->children.erase(widgets->children.begin() + static_cast<std::ptrdiff_t>(IndexOf(widgets, sp)));
+    Insert(widgets, IndexOf(widgets, sw) + 1, MakeScreenWidget(kMainFreeRideEntry, kMainList, &load));
+    if (!FitLayout(c, layout, layoutSize) || !FitScreen(c, screen, screenSize)) return false;
+    c.Log(std::string("entry ") + kFreeRideLabel + ": " + kMainFreeRideEntry + " in " + kMainList + " after " +
+          kMainEntry + " (in place of the hidden " + kMainPromoEntry + ")");
+    return true;
+}
+
 // Builds a page (the CO-OP page, the FREE RIDE page) into a host screen/layout pair from a template page (a screen +
 // its layout): same look; the title and the list entries are the spec's; Esc / B / the footer's BACK go back. Both
 // host resources keep their size; the host layout keeps its root widget name.
@@ -585,6 +633,8 @@ Result PatchGuiMain(sds::Archive& a) {
     PageSpec coop{kCoopLabel, {}, "btnCoop", "b"};
     for (const auto& e : CoopEntries()) coop.entries.push_back({e, e == kFreeRideLabel ? load.get() : nullptr});
     if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName, coop)) return res;
+    // and FREE RIDE in the main menu itself, right after CO-OP, doing the same
+    if (!AddMainFreeRide(c, screen, layout, *load)) return res;
     const freeride::Preset* p = freeride::PresetOf(freeride::kDefaultPart);
     c.Log(std::string("FREE RIDE -> game.mission.load mission ") + std::to_string(freeride::kMission) + " part " +
           std::to_string(freeride::kDefaultPart) + " (" + (p ? p->label : "?") + "), game " + freeride::kGame +

@@ -16,6 +16,10 @@
 // screen data the page's host screen does not have, so - only if needed - the footer's A glyph is hidden for good
 // instead of shown while a controller is used (its controller check is dropped). The other entries, and FREE RIDE in
 // the pause menu, do nothing yet.
+// The main menu also has FREE RIDE as an entry of its own, right after CO-OP, with the same loader action. The main
+// menu has no second hidden entry to reuse, so it takes the place of the list's never-shown promotion button
+// (btnPromoAction: invisible in the data and hidden again by its screen; its promo events go too) - the room the new
+// button needs in the layout and its action in the screen.
 #include "game/sds.h"
 
 #include <string>
