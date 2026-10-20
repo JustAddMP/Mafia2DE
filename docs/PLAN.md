@@ -46,6 +46,7 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
   test log); still to check: pad navigation and glyphs, the sounds (the test ran muted, no pad). 2026-10-19: FREE
   RIDE added as the second entry (both pages; does nothing yet), not seen in game yet. Later the same day: the
   main page's FREE RIDE starts Free Ride (D-FR) and that page's footer A glyph is hidden for good to fit it.
+  2026-10-20: the main menu itself also has FREE RIDE, right after CO-OP (D-FR); not seen in game yet.
 - [ ] **CO-OP entry in the pause menu** (after OPTIONS) opening the same page in the pause OPTIONS look. Gate: as above
   against the pause OPTIONS page. Status: built (the hidden cheats entry), the archive loads; needs a loaded save.
 - [ ] **Overlay fallback**: F8 opens core's CO-OP panels (only for testing while the native pages are not working;
@@ -110,6 +111,12 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
     no chase cars, no garage fill, police on, start at (129.164, 917.259, -21.260) on the street of the game's
     test cars; resource size and prefix word kept. Tests: `freeride_test` (format, compiler, our script run in a
     test VM for every part, the real archive), `menu_patch_test` (the FREE RIDE action, the footer).
+  - 2026-10-20 (0.17): FREE RIDE also as an entry of the main menu itself, right after CO-OP (THE STORY, CO-OP,
+    FREE RIDE, ADDITIONAL CONTENT, EXTRAS, OPTIONS, EXIT), with the same `game.mission.load` action as the CO-OP
+    page's FREE RIDE (which stays). A copy of the game's ADDITIONAL CONTENT button (skin, font, colours, size), one
+    row under CO-OP, the entries below one row down; it takes the place of the main menu's hidden promotion button
+    `btnPromoAction` (re-notes.md 3), both main menu resources keep their exact size. `menu_patch_test` checks the
+    order, style, rows, action and sizes. Not seen in game yet (not ticked).
   - Next: the in-game check (README-dev "Free Ride"), then a season picker (needs a bigger host screen or shared
     strings in the binary XML - check whether the game's binary XML reader resolves string offsets freely),
     FREE RIDE from the pause menu, then step (3).

@@ -3,7 +3,8 @@
 Menu-only build: the mod gets into the game and puts a CO-OP entry into the game's own main menu and pause menu,
 each opening a CO-OP page drawn by the game itself (HOST CO-OP GAME, FREE RIDE, JOIN FRIEND, JOIN BY IP, LOBBY,
 SETTINGS).
-FREE RIDE on the main menu's CO-OP page starts a single-player Free Ride in Empire Bay (the game's own free ride
+FREE RIDE - on the main menu's CO-OP page and, since 2026-10-20, also as an entry of the main menu itself right
+after CO-OP - starts a single-player Free Ride in Empire Bay (the game's own free ride
 debug mission with our own script; code written, not tried in game yet - see "Free Ride" below); the other entries
 do nothing yet; there is no networking. Plan: [docs/PLAN.md](docs/PLAN.md). What we know about the game:
 [docs/re-notes.md](docs/re-notes.md). First in-game test: [docs/test-2026-10-18-menu-launch.md](docs/test-2026-10-18-menu-launch.md)
@@ -44,6 +45,9 @@ script (`src/game/freeride.cpp`, compiled for the game's Lua 5.1 with 4-byte flo
 in place of the game's: no save, no test characters or cars, police on, our start position. A season picker does
 not fit the menu's size budget yet (Summer Day only); to fit the FREE RIDE action, the main CO-OP page's footer A
 glyph is hidden for good (keyboard and mouse see no change; a pad sees SELECT without the A glyph).
+The main menu itself also has FREE RIDE, right after CO-OP, with exactly the same action. The main menu has no other
+hidden entry to reuse, so it takes the place of the list's hidden promotion button (`btnPromoAction`, never shown in
+the DE; re-notes.md 3); both main menu resources keep their exact size.
 
 ## Build and test
 
@@ -61,7 +65,10 @@ build.cmd test     the same, then runs every test (output in out\<test>.txt); ex
   changed resource keeps its exact size and prefix word, every other resource (daemons too) is byte-identical. It leaves `out\menu_patch\gui-main.sds`, `gui.sds` and
   `*.patch.txt` (the patched trees as XML text) for inspection.
   It also checks the main page's FREE RIDE action (`game.mission.load` mission 0 part 1, FirstCity, gameLine 1, hover
-  kept, no other entry doing anything) and the footer (BACK and SELECT kept, the A glyph check either kept or the
+  kept, no other entry doing anything), the main menu's own FREE RIDE entry (order THE STORY, CO-OP, FREE RIDE,
+  ADDITIONAL CONTENT, EXTRAS, OPTIONS, EXIT; a game entry's skin, font, colours and size; one row apart; the same
+  action as the page's FREE RIDE; the promotion button's events gone; both main menu resources at their exact
+  size) and the footer (BACK and SELECT kept, the A glyph check either kept or the
   glyph hidden for good).
 - `freeride_test`: Lua 5.1 chunks with 4-byte floats (made-up chunk round trip, the loader's code checks), our
   compiler's exact output for small snippets and its refusals, the Script resource layout and FNV-1 64 hashes, our
@@ -75,8 +82,8 @@ build.cmd test     the same, then runs every test (output in out\<test>.txt); ex
 - `menu_nav`: core's overlay panels (the F8 fallback) driven by injected keys.
 - `pad_nav`, `ui_prompts`: core's pad navigation and footer prompt logic (copied tests).
 
-Last result (2026-10-19, Free Ride): build warning-free, all five tests pass (menu_patch_test 45 checks, 31 of them
-against the installed game; freeride_test 63 checks, 12 of them against the installed game). Our chunk was also
+Last result (2026-10-20, FREE RIDE in the main menu): build warning-free, all five tests pass (menu_patch_test 53
+checks, 39 of them against the installed game; freeride_test 63 checks, 12 of them against the installed game). Our chunk was also
 listed with the independent Python lister used for the research: same functions and instruction sequences (267
 instructions; the game's script: 1380).
 
@@ -121,6 +128,7 @@ folder>` (if Steam lookup fails).
   `.../Screens/MainMenu/LoadMission: the footer's A glyph hidden for good (its controller check dropped to keep the
   size; a pad sees SELECT without the glyph)`, `.../Screens/MainMenu/LoadMission: entry names 25 character(s) longer
   to keep its size`, `FREE RIDE -> game.mission.load mission 0 part 1 (SUMMER DAY), game FirstCity, gameLine 1`,
+  `entry FREE RIDE: btnFreeRide in listboxMainMenu after btnLoadMission (in place of the hidden btnPromoAction)`,
   `gui-main.sds patched in N ms: 5812140 -> 14428432 bytes, 446 resources`, `sds: ...gui-main.sds -> ...`.
   A `FAILED: ... cannot keep its size` line means that menu stays unchanged (the game's own archive is used).
 - `init: game window ... class 'Mafia II: Definitive Edition' title 'Mafia II: Definitive Edition'`
@@ -135,6 +143,9 @@ folder>` (if Steam lookup fails).
 
 1. **Main menu** (after the title screen's "Press any key"): a **CO-OP** entry right under THE STORY, same font, size, colour and highlight as the other entries.
    Mouse hover, arrow keys / d-pad and the pad highlight it like the others; the menu's own sounds play.
+   Right under CO-OP: **FREE RIDE** (new 2026-10-20), the same look and highlight, then ADDITIONAL CONTENT, EXTRAS,
+   OPTIONS, EXIT one row lower than before, no gap. Selecting it starts Free Ride exactly like the CO-OP page's FREE
+   RIDE (see "Free Ride" below: back up the saves first). Esc / BACK on the main menu still go to the title screen.
 2. Select it (Enter / click / A): the game's page transition, then a page that looks like **EXTRAS** but titled
    **CO-OP**, listing HOST CO-OP GAME, **FREE RIDE**, JOIN FRIEND, JOIN BY IP, LOBBY, SETTINGS (in that order), with
    the usual footer (BACK / SELECT with the pad glyphs; with keyboard and mouse only BACK shows, as on EXTRAS;
@@ -170,7 +181,8 @@ free ride script would save into slot 1 - **back up the saves first** and check 
    `G:\M2-save-backup-<date>`. Note the file names, sizes and times in `Saves\<steam id>\`. Steam Cloud keeps the
    saves too; if one ever changes, restore the copy before Steam syncs it (or turn Steam Cloud off for the game during
    these tests).
-2. Launch as usual (`out\Mafia2Coop.exe --log test`), main menu -> CO-OP -> **FREE RIDE** (Enter / click / A).
+2. Launch as usual (`out\Mafia2Coop.exe --log test`), main menu -> CO-OP -> **FREE RIDE** (Enter / click / A), or
+   main menu -> **FREE RIDE** (the same action).
 3. Expected: the game's loading screen (its own, probably the mission loading picture), then Empire Bay in summer,
    daytime, clear weather; the player (Vito, in whatever clothes the free ride mission gives him) on a street in
    Little Italy, between parked / passing cars, control unlocked after a 1 s fade in; traffic driving, pedestrians,
@@ -227,7 +239,9 @@ What would mean what:
 - Free Ride entirely (re-notes.md 5.1): that FREE RIDE's `game.mission.load` starts mission 0 in the DE, that the
   debug mission and its city load, that the game accepts our script resource (same size and prefix word, new data
   hash), that our script runs to the end (no Lua error in the game's API use), the start position, traffic / police /
-  radio, that no save is written by the engine itself, the pause menu in the mission. The main CO-OP page's footer
+  radio, that no save is written by the engine itself, the pause menu in the mission. The main menu's own FREE RIDE
+  entry (2026-10-20): that the archive still loads without the promotion button, its look, the padding events on
+  the main menu's BACK. The main CO-OP page's footer
   without the A glyph check (pad only).
 
 - The pause menu entry and page (needs a loaded save; not done in the test so as not to touch the saves).

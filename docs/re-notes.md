@@ -129,6 +129,20 @@ zeros):
   (`text="CO-OP" textid="0"`) and the visibility condition `\u100` (the one EXIT uses; shown on PC). Its `use`
   stays `screen.activate replace LoadMission`; the screen `LoadMission` (only reachable from that entry) is the
   CO-OP page. The list re-flows visible entries, so CO-OP sits right under THE STORY.
+- main menu, FREE RIDE (since 2026-10-20): an entry of its own right after CO-OP with the same
+  `game.mission.load` action as the main CO-OP page's FREE RIDE (section 5.1). The main menu has no second hidden
+  entry to reuse, and a new button costs about 2 KB of layout while trimming the layout's numbers frees only about
+  560 bytes, so it takes the place of the list's promotion button `btnPromoAction`: invisible in the layout
+  (`visible="false"`), hidden again by its screen (`create` -> `widget.setvisibility false`), only the game's promo
+  service could show it (`promo.registerWidget type="mainmenu"` with `ImageMenu1`, `promo.highlight` with
+  `gbPromoHighlight`, `promo.viewPromotion`; 2K's online promotions - no promo image shows in the DE's main menu).
+  Its layout button and its screen widget with those events go; the exe has no string `btnPromoAction` (it does
+  name `gbPromoHighlight`, which stays: an empty invisible box). The new button `btnFreeRide` is a copy of
+  ADDITIONAL CONTENT (the entry below CO-OP: skin `button.buton`, CREAMPUF 0.05, colours, size, no freeze) with
+  the literal label FREE RIDE and CO-OP's tooltip, one row (0.062) under CO-OP; the entries below move down one
+  row (EXIT at 0.372; the list is 0.6221 tall). Its screen widget: the loader `use`, then the hover
+  `container.selectItem` on `listboxMainMenu`, as the game's entries. Sizes: the main menu screen (6634 bytes)
+  and layout (40907 bytes) keep theirs (section 4). UNVERIFIED in game.
 - pause menu: the hidden cheats entry `btnCheats` (right after `btnOptions` in `listboxGameMenu`, hidden by
   `\u130`) likewise; its screen `Cheats` is the CO-OP page.
 - the pages: built into those debug screens and their layouts (`Screens/MainMenu/LoadMission` +
@@ -192,6 +206,8 @@ change (the CO-OP pages have other trees than the screens they replace, and load
   3142-byte LoadMission screen, needed both with five entries); with six entries also dropping the fade elements
   (they are 0 s long, `\f0`, as on EXTRAS; the game's own Garage, PhoneMenu and Question screens have none -
   UNVERIFIED in game);
+  (the main menu screen since 2026-10-20: four such events on its last widget, now the footer's `btnBack`, after
+  the promotion button's events went - UNVERIFIED in game);
 - when a screen ends up a few bytes short and too tight for one more padding event: longer (invisible) entry
   widget names in the screen and the layout (`btnCoop0xx`, ...; the main CO-OP page needs 7 characters).
 
