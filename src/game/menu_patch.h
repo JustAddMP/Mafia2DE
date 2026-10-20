@@ -34,9 +34,12 @@ struct Result {
 };
 
 // gui-main.sds: main menu entry + page, both daemons' "Coop" screens.
-Result PatchGuiMain(sds::Archive& guiMain);
-// gui.sds: pause menu entry + page. `guiMain` (unpatched or patched) supplies the OPTIONS page layout template.
-Result PatchGui(sds::Archive& gui, const sds::Archive& guiMain);
+// `notice` (game/update_notice.h; "" = none): a line under the CO-OP page's list in the look of the game's own notice
+// under THE STORY page's list (its InstallWarningText); should it ever not fit, the page is built without it.
+Result PatchGuiMain(sds::Archive& guiMain, const std::string& notice = {});
+// gui.sds: pause menu entry + page. `guiMain` (unpatched or patched) supplies the OPTIONS page layout template and the
+// notice's template; `notice` as above.
+Result PatchGui(sds::Archive& gui, const sds::Archive& guiMain, const std::string& notice = {});
 
 // The labels on the pages (also used by the tests).
 const std::vector<std::string>& CoopEntries();

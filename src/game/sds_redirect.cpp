@@ -5,6 +5,7 @@
 #include "game/freeride.h"
 #include "game/menu_patch.h"
 #include "game/sds.h"
+#include "game/update_notice.h"
 
 #include <windows.h>
 
@@ -192,9 +193,11 @@ std::wstring Build(Kind kind, const std::wstring& requested) {
         MC_LOG_WARN("menu: %s: %s; menus unchanged", Narrow(original).c_str(), err.c_str());
         return {};
     }
+    // the update notice for the CO-OP pages, if a newer release is out (the first build waits for the check)
+    const std::string notice = update_notice::Line();
     menu_patch::Result r;
     if (kind == Kind::GuiMain) {
-        r = menu_patch::PatchGuiMain(a);
+        r = menu_patch::PatchGuiMain(a, notice);
     } else {
         const std::wstring mainPath = dir + L"\\gui-main.sds";
         if (!ReadFileAll(mainPath, rawMain) || !sds::Read(rawMain, main, &err)) {
@@ -202,7 +205,7 @@ std::wstring Build(Kind kind, const std::wstring& requested) {
                         Narrow(mainPath).c_str(), err.c_str());
             return {};
         }
-        r = menu_patch::PatchGui(a, main);
+        r = menu_patch::PatchGui(a, main, notice);
     }
     for (const auto& l : r.log) MC_LOG_INFO("menu: %ls: %s", fileName, l.c_str());
     const std::wstring pid = std::to_wstring(GetCurrentProcessId());

@@ -16,7 +16,8 @@ struct GameBuild {
 struct GameInfo {
     // ---- the mod ----
     const char* modName;           // "Mafia2Coop": banners, logs, kernel object names
-    const char* modVersion;        // shown in the log and the settings panel
+    const char* modVersion;        // shown in the log and the settings panel; the update check compares with it
+    const char* updateId;          // the update check asks https://justaddmp.com/api/version/<updateId>
     const wchar_t* launcherName;   // "Mafia2Coop.exe"
     const wchar_t* dllName;        // "mafia2coop.dll" (next to the launcher)
     const wchar_t* iniName;        // "Mafia2Coop.ini" (next to the launcher; only game_path / inject_method)

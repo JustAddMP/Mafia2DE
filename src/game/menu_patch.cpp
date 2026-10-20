@@ -58,6 +58,16 @@ constexpr char kPauseHostScreen[] = "/config/gui/Screens/GameMenu/Cheats";
 constexpr char kPauseHostLayout[] = "/config/gui/ScreenLayouts/Cheats";
 constexpr char kPauseHostLayoutName[] = "Cheats";
 
+// The update notice (game/update_notice.h) on the CO-OP pages: a copy of the game's own page notice - the line under
+// THE STORY page's list that warns when the game is not fully installed (statictext InstallWarningText: its skin,
+// CREAMPUF font, size, colour, box) - with our literal text, placed under our list as that one sits under THE
+// STORY's (same offset from the list's left edge and from its last row). Layout only: the screens are not touched,
+// the layout's padding absorbs it.
+constexpr char kNoticeTplLayout[] = "/config/gui/ScreenLayouts/TheStory";  // in gui-main.sds
+constexpr char kNoticeTplWidget[] = "InstallWarningText";
+constexpr char kNoticeTplList[] = "MenuList";
+constexpr char kNoticeName[] = "stCoopUpdate";
+
 struct Ctx {
     Result& res;
     void Log(const std::string& s) { res.log.push_back(s); }
@@ -170,10 +180,18 @@ struct PageEntry {
     std::string label;
     const Node* use = nullptr;
 };
+// The update notice for a page: our text, the game's notice widget to copy and where it sits relative to its list
+// (dx from the list's left edge, dy below the list's last row).
+struct Notice {
+    std::string text;
+    std::unique_ptr<Node> tpl;
+    double dx = 0, dy = 0;
+};
 struct PageSpec {
     std::string title;
     std::vector<PageEntry> entries;
     std::string prefix, shortPrefix;
+    const Notice* notice = nullptr;  // null or no tpl: no notice
 };
 
 // How the page's widgets are named: the entries' name prefix and (if not empty) a new name for the list widget.
@@ -220,6 +238,69 @@ bool ReadDoc(Ctx& c, const sds::Archive& a, const char* name, bxml::Document& ou
     std::string err;
     if (!bxml::Read(r->data, out, &err)) return c.Fail(std::string(name) + ": " + err);
     return true;
+}
+
+Node* ParentOf(Node* root, const Node* child) {
+    for (auto& c : root->children) {
+        if (c.get() == child) return root;
+        if (Node* p = ParentOf(c.get(), child)) return p;
+    }
+    return nullptr;
+}
+
+double PosAttr(Node* widget, const char* key) {
+    Node* props = widget ? widget->Child("properties") : nullptr;
+    return AttrNum(props ? props->Child("position") : nullptr, key);
+}
+
+// The update notice's template from THE STORY page (gui-main.sds). An empty `text` means no notice; a missing
+// template only costs the notice (logged), never the CO-OP pages.
+void LoadNotice(Ctx& c, const sds::Archive& guiMain, const std::string& text, Notice& out) {
+    out.text = text;
+    if (text.empty()) return;
+    bxml::Document story;
+    Result scratch;
+    Ctx quiet{scratch};
+    if (!ReadDoc(quiet, guiMain, kNoticeTplLayout, story)) {
+        c.Log(std::string("update notice: ") + kNoticeTplLayout + " not found; no notice");
+        return;
+    }
+    Node* w = Widget(story.root.get(), kNoticeTplWidget);
+    Node* list = Widget(story.root.get(), kNoticeTplList);
+    Node* items = list ? list->Child("items") : nullptr;
+    const std::string* ty = w ? w->Attr("type") : nullptr;
+    if (!w || !ty || *ty != "statictext" || !items || items->children.empty() || ParentOf(story.root.get(), w) !=
+        ParentOf(story.root.get(), list)) {
+        c.Log(std::string("update notice: ") + kNoticeTplWidget + " / " + kNoticeTplList + " not as expected in " +
+              kNoticeTplLayout + "; no notice");
+        return;
+    }
+    const double row = RowHeight(items->children.front().get());
+    out.dx = PosAttr(w, "x") - PosAttr(list, "x");
+    out.dy = PosAttr(w, "y") - (PosAttr(list, "y") + row * static_cast<double>(items->children.size()));
+    out.tpl = w->Clone();
+}
+
+// The notice widget for a page whose list `lb` (holding `rows` entries of height `row`) is in `parent`: right after
+// the list, at the template's offset from it.
+std::unique_ptr<Node> MakeNotice(const Notice& n, Node* lb, size_t rows, double row) {
+    auto w = n.tpl->Clone();
+    w->SetAttr("name", kNoticeName);
+    if (Node* props = w->Child("properties")) {
+        if (Node* cd = props->Child("commondata")) {
+            cd->SetAttr("disabled", "false");
+            cd->SetAttr("visible", "true");
+        }
+        if (Node* t = props->Child("text")) {
+            t->SetAttr("text", n.text);
+            t->SetAttr("textid", "0");
+        }
+        if (Node* p = props->Child("position")) {
+            p->SetAttr("x", Fmt4(PosAttr(lb, "x") + n.dx));
+            p->SetAttr("y", Fmt4(PosAttr(lb, "y") + row * static_cast<double>(rows) + n.dy));
+        }
+    }
+    return w;
 }
 
 // ---- keeping every resource's size ----
@@ -506,6 +587,17 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
         names.push_back(style.entryPrefix + std::to_string(i) + std::string(extra, 'x'));
         items->children.push_back(MakeButton(*tplButton, names.back(), entries[i].label, row * static_cast<double>(i)));
     }
+    std::string noticeLog;
+    if (spec.notice && spec.notice->tpl && !spec.notice->text.empty()) {
+        Node* parent = ParentOf(layout.get(), lb);
+        if (!parent) return c.Fail("template list has no parent");
+        auto n = MakeNotice(*spec.notice, lb, entries.size(), row);
+        const Node* pos = n->Child("properties") ? n->Child("properties")->Child("position") : nullptr;
+        noticeLog = "update notice \"" + spec.notice->text + "\" under the list (" + kNoticeName + ", " +
+                    kNoticeTplWidget + "'s look, at " + (pos && pos->Attr("x") ? *pos->Attr("x") : "?") + ", " +
+                    (pos && pos->Attr("y") ? *pos->Attr("y") : "?") + ")";
+        Insert(parent, IndexOf(parent, lb) + 1, std::move(n));
+    }
 
     // ---- screen ----
     auto screen = tplScreen.root->Clone();
@@ -574,6 +666,7 @@ bool BuildPageOnce(Ctx& c, const bxml::Document& tplScreen, const bxml::Document
     if (!FitLayout(c, hostLayout, layoutSize) || !FitScreen(c, hostScreen, screenSize)) return false;
     c.Log(std::string("page built in ") + hostScreen.res->sourceName + " / " + hostLayout.res->sourceName + " (" +
           std::to_string(entries.size()) + " entries, list " + list + ")");
+    if (!noticeLog.empty()) c.Log(hostLayout.res->sourceName + ": " + noticeLog);
     return true;
 }
 
@@ -617,7 +710,21 @@ const std::vector<std::string>& CoopEntries() {
     return k;
 }
 
-Result PatchGuiMain(sds::Archive& a) {
+namespace {
+
+// BuildPage with the update notice; should the notice ever not fit, the page without it (the CO-OP page matters more).
+bool BuildCoopPage(Ctx& c, const bxml::Document& tplScreen, const bxml::Document& tplLayout, Res& hostScreen,
+                   Res& hostLayout, const char* hostLayoutName, PageSpec& spec) {
+    if (BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, hostLayoutName, spec)) return true;
+    if (!spec.notice || !spec.notice->tpl || spec.notice->text.empty()) return false;
+    c.Log(hostLayout.res->sourceName + ": the update notice does not fit; the page without it");
+    spec.notice = nullptr;
+    return BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, hostLayoutName, spec);
+}
+
+}  // namespace
+
+Result PatchGuiMain(sds::Archive& a, const std::string& notice) {
     Result res;
     Ctx c{res};
     Res screen, layout, hostScreen, hostLayout;
@@ -628,11 +735,13 @@ Result PatchGuiMain(sds::Archive& a) {
         return res;
     if (!RepurposeEntry(c, screen, layout, kMainList, kMainEntry)) return res;
 
-    // the CO-OP page; its FREE RIDE entry starts Free Ride (the default preset)
+    // the CO-OP page; its FREE RIDE entry starts Free Ride (the default preset); the update notice if any
     const auto load = FreeRideUse(freeride::kDefaultPart);
-    PageSpec coop{kCoopLabel, {}, "btnCoop", "b"};
+    Notice upd;
+    LoadNotice(c, a, notice, upd);
+    PageSpec coop{kCoopLabel, {}, "btnCoop", "b", &upd};
     for (const auto& e : CoopEntries()) coop.entries.push_back({e, e == kFreeRideLabel ? load.get() : nullptr});
-    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName, coop)) return res;
+    if (!BuildCoopPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kMainHostLayoutName, coop)) return res;
     // and FREE RIDE in the main menu itself, right after CO-OP, doing the same
     if (!AddMainFreeRide(c, screen, layout, *load)) return res;
     const freeride::Preset* p = freeride::PresetOf(freeride::kDefaultPart);
@@ -644,7 +753,7 @@ Result PatchGuiMain(sds::Archive& a) {
     return res;
 }
 
-Result PatchGui(sds::Archive& a, const sds::Archive& guiMain) {
+Result PatchGui(sds::Archive& a, const sds::Archive& guiMain, const std::string& notice) {
     Result res;
     Ctx c{res};
     Res screen, layout, hostScreen, hostLayout;
@@ -654,9 +763,11 @@ Result PatchGui(sds::Archive& a, const sds::Archive& guiMain) {
         !ReadDoc(c, a, kPauseTplScreen, tplScreen) || !ReadDoc(c, guiMain, kPauseTplLayout, tplLayout))
         return res;
     if (!RepurposeEntry(c, screen, layout, kPauseList, kPauseEntry)) return res;
-    PageSpec coop{kCoopLabel, {}, "btnCoop", "b"};
+    Notice upd;
+    LoadNotice(c, guiMain, notice, upd);
+    PageSpec coop{kCoopLabel, {}, "btnCoop", "b", &upd};
     for (const auto& e : CoopEntries()) coop.entries.push_back({e, nullptr});
-    if (!BuildPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kPauseHostLayoutName, coop)) return res;
+    if (!BuildCoopPage(c, tplScreen, tplLayout, hostScreen, hostLayout, kPauseHostLayoutName, coop)) return res;
     for (Res* r : {&screen, &layout, &hostScreen, &hostLayout}) Store(c, *r);
     res.ok = true;
     return res;

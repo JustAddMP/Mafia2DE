@@ -6,6 +6,7 @@
 #include "core/log.h"
 #include "dll/ui_input.h"
 #include "game/sds_redirect.h"
+#include "game/update_notice.h"
 
 #include <windows.h>
 
@@ -21,6 +22,9 @@ public:
         // The CO-OP entries in the game's own main and pause menus (game/menu_patch.h): the game opens patched
         // copies of its two menu archives. Must be in place before the game loads its menus.
         sds_redirect::Install(dllDir);
+        // The update check (game/update_notice.h): started now so that its answer is in by the time the game opens
+        // its menu archives, which is when the notice goes into the CO-OP pages.
+        update_notice::Start();
     }
 
     void RenderTick(float) override {

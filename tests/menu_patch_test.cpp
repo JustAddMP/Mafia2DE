@@ -31,6 +31,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace mc::game;
@@ -391,6 +392,136 @@ void TestMainFreeRide(sds::Archive& mainOrig, sds::Archive& backMain, const std:
     }
 }
 
+// The update notice (src/game/update_notice.h) on both CO-OP pages: patched once more with a notice line (a long
+// version, the worst case for the size), against the patch without one (`noMain` / `noGui`).
+void TestUpdateNotice(const std::vector<uint8_t>& rawMain, const std::vector<uint8_t>& rawGui, sds::Archive& mainOrig,
+                      sds::Archive& gOrig, sds::Archive& noMain, sds::Archive& noGui, const std::wstring& outDir) {
+    const std::string line = "UPDATE AVAILABLE: V10.100.1000-RC.10 AT JUSTADDMP.COM";
+    sds::Archive main, g;
+    std::string err;
+    if (!sds::Read(rawMain, main, &err) || !sds::Read(rawGui, g, &err)) {
+        Check(false, "update notice: archives read", err);
+        return;
+    }
+    const auto r1 = menu_patch::PatchGuiMain(main, line);
+    const auto r2 = menu_patch::PatchGui(g, mainOrig, line);
+    for (const auto& l : r1.log) std::printf("      gui-main (notice): %s\n", l.c_str());
+    for (const auto& l : r2.log) std::printf("      gui (notice): %s\n", l.c_str());
+    auto logged = [](const menu_patch::Result& r) {
+        for (const auto& l : r.log)
+            if (Has(l, "update notice \"") && !Has(l, "does not fit")) return true;
+        return false;
+    };
+    Check(r1.ok && r2.ok && logged(r1) && logged(r2), "update notice: both archives patched with the notice on the page");
+    if (!r1.ok || !r2.ok) return;
+    const auto outMain = sds::Write(main), outGui = sds::Write(g);
+    sds::Archive backMain, backGui;
+    Check(sds::Read(outMain, backMain, &err) && sds::Read(outGui, backGui, &err), "update notice: patched archives read back", err);
+    std::string t;
+    for (const auto* rp : {&r1, &r2})
+        for (const auto& [n, x] : rp->dumps) t += "<!-- " + n + " -->\n" + x + "\n";
+    WriteAll(outDir + L"\\update-notice.patch.txt", t.data(), t.size());
+
+    // the game's notice under THE STORY's list: the template and its offset from that list
+    bxml::Document story;
+    sds::Resource* sr = mainOrig.Find("/config/gui/ScreenLayouts/TheStory");
+    if (!sr || !bxml::Read(sr->data, story, nullptr)) {
+        Check(false, "update notice: THE STORY layout readable");
+        return;
+    }
+    bxml::Node* tw = story.root->FindByAttr("widget", "name", "InstallWarningText");
+    bxml::Node* tl = story.root->FindByAttr("widget", "name", "MenuList");
+    auto pos = [](bxml::Node* w, const char* k) {
+        bxml::Node* p = w ? w->Child("properties") : nullptr;
+        bxml::Node* q = p ? p->Child("position") : nullptr;
+        return Num(q ? q->Attr(k) : nullptr);
+    };
+    auto rowOf = [](bxml::Node* list) {  // the list's row height: its first entry's height
+        bxml::Node* items = list ? list->Child("items") : nullptr;
+        bxml::Node* p = items && !items->children.empty() ? items->children.front()->Child("properties") : nullptr;
+        bxml::Node* s = p ? p->Child("size") : nullptr;
+        return Num(s ? s->Attr("y") : nullptr);
+    };
+    const size_t storyRows = tl && tl->Child("items") ? tl->Child("items")->children.size() : 0;
+    const double dx = pos(tw, "x") - pos(tl, "x"),
+                 dy = pos(tw, "y") - (pos(tl, "y") + rowOf(tl) * static_cast<double>(storyRows));
+    Check(tw && tl && storyRows == 3, "update notice: THE STORY's InstallWarningText under its 3-entry MenuList (the template)");
+
+    for (auto [arc, layoutName, label] :
+         {std::tuple<sds::Archive*, const char*, const char*>{&backMain, "/config/gui/ScreenLayouts/LoadMission", "main"},
+          {&backGui, "/config/gui/ScreenLayouts/Cheats", "pause"}}) {
+        bxml::Document d;
+        sds::Resource* r = arc->Find(layoutName);
+        if (!r || !bxml::Read(r->data, d, nullptr)) {
+            Check(false, std::string("update notice: ") + label + " page readable");
+            continue;
+        }
+        bxml::Node* n = d.root->FindByAttr("widget", "name", "stCoopUpdate");
+        bxml::Node* lb = FirstListbox(d.root.get());
+        std::string why;
+        bxml::Node* np = n ? n->Child("properties") : nullptr;
+        bxml::Node* tp = tw ? tw->Child("properties") : nullptr;
+        if (!np || !tp || !lb) why = "missing";
+        if (why.empty() && (!n->Attr("type") || *n->Attr("type") != "statictext")) why = "not a statictext";
+        for (const char* k : {"skin", "color", "textformat", "size", "metrics", "hierarchy", "dock", "tooltip"}) {
+            if (!why.empty()) break;
+            bxml::Node* x = np->Child(k);
+            bxml::Node* y = tp->Child(k);
+            bool same = (x == nullptr) == (y == nullptr) && (!x || x->attrs.size() == y->attrs.size());
+            for (size_t a = 0; same && x && a < x->attrs.size(); ++a)
+                same = x->attrs[a].first == y->attrs[a].first &&
+                       (x->attrs[a].second == y->attrs[a].second || Num(&x->attrs[a].second) == Num(&y->attrs[a].second));
+            if (!same) why = std::string(k) + " differs from InstallWarningText";
+        }
+        if (why.empty()) {
+            bxml::Node* tx = np->Child("text");
+            bxml::Node* cd = np->Child("commondata");
+            if (!tx || !tx->Attr("text") || *tx->Attr("text") != line || !tx->Attr("textid") || *tx->Attr("textid") != "0")
+                why = "text";
+            else if (!cd || !cd->Attr("visible") || *cd->Attr("visible") != "true")
+                why = "hidden";
+        }
+        if (why.empty()) {
+            const size_t rows = lb->Child("items") ? lb->Child("items")->children.size() : 0;
+            const double wantX = pos(lb, "x") + dx, wantY = pos(lb, "y") + rowOf(lb) * static_cast<double>(rows) + dy;
+            if (std::abs(pos(n, "x") - wantX) > 0.0002 || std::abs(pos(n, "y") - wantY) > 0.0002)
+                why = "position " + std::to_string(pos(n, "x")) + ", " + std::to_string(pos(n, "y")) + " (want " +
+                      std::to_string(wantX) + ", " + std::to_string(wantY) + ")";
+        }
+        if (why.empty()) {  // right after the list, in the same parent
+            const std::string text = bxml::ToText(*d.root);
+            const size_t a = text.find("<widget name=\"" + *lb->Attr("name") + "\"");
+            const size_t b = text.find("<widget name=\"stCoopUpdate\"");
+            const size_t itemsEnd = text.find("</items>", a);
+            const std::string between = itemsEnd == std::string::npos || b < itemsEnd ? std::string("<widget") : text.substr(itemsEnd, b - itemsEnd);
+            if (a == std::string::npos || b < a || Count(between, "<widget") != 0) why = "not right after the list";
+        }
+        Check(why.empty(), std::string("update notice: ") + label +
+                               " CO-OP page: the line under the list, InstallWarningText's skin, font, colour, box", why);
+    }
+    // only the page layouts differ from the patch without a notice; sizes, prefix words and everything else kept
+    std::string diff;
+    for (auto [a, b, orig, name] :
+         {std::tuple<sds::Archive*, sds::Archive*, sds::Archive*, const char*>{&backMain, &noMain, &mainOrig, "gui-main"},
+          {&backGui, &noGui, &gOrig, "gui"}}) {
+        for (size_t i = 0; i < a->resources.size() && i < b->resources.size() && i < orig->resources.size(); ++i) {
+            const auto& x = a->resources[i];
+            const bool page = x.sourceName == "/config/gui/ScreenLayouts/LoadMission" || x.sourceName == "/config/gui/ScreenLayouts/Cheats";
+            if (!page && x.data != b->resources[i].data) diff += x.sourceName + " differs ";
+            if (page && (x.data.size() != orig->resources[i].data.size() ||
+                         std::memcmp(x.data.data(), orig->resources[i].data.data(), 4) != 0))
+                diff += x.sourceName + " size or prefix ";
+        }
+        if (a->resources.size() != orig->resources.size()) diff += std::string(name) + " resource count ";
+    }
+    Check(diff.empty(), "update notice: only the page layouts change, at their exact size and prefix word", diff);
+    std::string noText;
+    for (auto* a : {&noMain, &noGui})
+        for (const char* n : {"/config/gui/ScreenLayouts/LoadMission", "/config/gui/ScreenLayouts/Cheats"})
+            if (a->Find(n) && Has(Text(*a, n), "stCoopUpdate")) noText += n;
+    Check(noText.empty(), "update notice: none without a newer release (no line, no hidden widget)", noText);
+}
+
 void TestGameFiles(const std::wstring& outDir) {
     const std::wstring game = FindGameDir();
     if (game.empty()) {
@@ -559,6 +690,8 @@ void TestGameFiles(const std::wstring& outDir) {
     Check(unchanged(mainOrig, backMain, changedMain), "gui-main.sds: every other resource is byte-identical (daemons too)");
     Check(unchanged(gOrig, backGui, changedGui), "gui.sds: every other resource is byte-identical");
     Check(backMain.index == mainOrig.index && backGui.index == gOrig.index, "both: the resource index text is unchanged");
+
+    TestUpdateNotice(rawMain, rawGui, mainOrig, gOrig, backMain, backGui, outDir);
 }
 
 }  // namespace

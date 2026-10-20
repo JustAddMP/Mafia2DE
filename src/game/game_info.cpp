@@ -14,6 +14,7 @@ constexpr GameBuild kBuilds[] = {
 constexpr GameInfo kInfo = {
     .modName = "Mafia2Coop",
     .modVersion = "0.0.1",
+    .updateId = "mafia2-de",
     .launcherName = L"Mafia2Coop.exe",
     .dllName = L"mafia2coop.dll",
     .iniName = L"Mafia2Coop.ini",
