@@ -1,7 +1,8 @@
 # Plan - next steps
 
-Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-19
-(Free Ride code written, single player, waiting for an in-game test: D-FR; re-notes.md 5.1). Read with `re-notes.md` (what we
+Living plan for the Mafia II: Definitive Edition co-op mod. Update it as items land. Last updated 2026-10-20
+(update notice on the CO-OP pages: E; before that Free Ride code written, single player, waiting for an in-game
+test: D-FR; re-notes.md 5.1). Read with `re-notes.md` (what we
 know about the game) and `../README-dev.md` (build, launch, the test checklist).
 
 ## Where we are
@@ -124,6 +125,14 @@ Tick an item (`- [x]`) in the same commit that lands it. Nothing is ticked until
   traffic and police, items. Research first, as for Mafia DE (docs/research-world-sync.md there).
 
 ### E. Polish and release (phase 5)
+- [ ] **Update notice**: once per game start the dll asks `https://justaddmp.com/api/version/mafia2-de` (its own
+  thread, 5 s per step; core v0.13.0's update check copied into `src/core` until B1) and, when a newer release than
+  `modVersion` is out, both CO-OP pages show `UPDATE AVAILABLE: V<x.y.z> AT JUSTADDMP.COM` under their list, in the
+  look of the game's own notice under THE STORY's list (re-notes.md 3); the main menu has no room for it. No switch;
+  any failure is one log line. Tests: `update_check` (core's plus the menu line), `menu_patch_test` (the notice on
+  both pages, exact sizes). Status 2026-10-20: seen in game on the main CO-OP page with
+  `--update-url .../mafia-de` (README-dev); not ticked until a real Mafia II release is announced this way and the
+  pause page shows it.
 - [ ] Name tags / map markers in the game's style, settings, reconnect, README with screenshots, release package,
   website entry update.
 

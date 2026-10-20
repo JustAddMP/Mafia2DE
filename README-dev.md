@@ -38,6 +38,22 @@ files and deleted at the next start.
 The core-style overlay panels (copied from JustAddMP core, our generic look) are still in the dll behind **F8**, as
 a fallback for this test only; they are not the target look.
 
+**Update notice** (since 2026-10-20): once per game start the dll asks `GET https://justaddmp.com/api/version/mafia2-de`
+(`{"mod":"mafia2-de","latest":null,...}` until Mafia II has a GitHub release; with one, `"latest":"v0.2.0"` and the
+release's url) on a thread of its own, 5 s per step (name lookup, connect, send, receive). When `latest` is newer
+than the mod's version (`modVersion` in `src/game/game_info.cpp`, now 0.0.1; pre-releases compare as in semver),
+both CO-OP pages (main menu and pause menu) show a line under their list:
+`UPDATE AVAILABLE: V0.2.0 AT JUSTADDMP.COM`. It is a copy of the game's own page notice - the line under THE
+STORY's list that warns when the game is not fully installed (`InstallWarningText`: its skin, small capitals, red,
+box), placed under our list as that one sits under THE STORY's; only the page layouts change, at their exact size
+(re-notes.md 3). The menus are data the game reads once, when it opens its menu archives (about 9 s after our dll
+starts; the check takes well under a second), so the line is baked into the patched archives then: the first
+archive build waits for a check still running, at most 5 s. No answer by then, offline, a bad answer, no release or
+no newer release: no line, one log line, nothing else. No switch. The main menu itself has no room for a line (its
+layout is at its exact size since FREE RIDE took the promotion button's place), so the notice is on the CO-OP page,
+the place a co-op player opens. Code: `src/core/update_check.*` (a copy of core v0.13.0's module, until B1),
+`src/game/update_notice.*`, the notice in `src/game/menu_patch.cpp`.
+
 **Free Ride** (docs/PLAN.md D-FR, re-notes.md 5.1): the main CO-OP page's FREE RIDE runs the game's own mission
 loader for the base game's FREE RIDE debug mission (`game.mission.load`, mission 0, part 1 = Summer Day). That
 mission's script archive `pc\sds\missionscript\freeraid_main.sds` is redirected like the menus, with our own
@@ -55,7 +71,8 @@ Needs Visual Studio 2022+ with the x64 C++ toolset and the Windows SDK (fxc). No
 
 ```
 build.cmd          builds out\Mafia2Coop.exe (launcher), out\mafia2coop.dll, out\menu_nav.exe, out\pad_nav.exe,
-                   out\ui_prompts.exe, out\menu_patch_test.exe, out\freeride_test.exe (+ PDBs); objects in out\obj\
+                   out\ui_prompts.exe, out\menu_patch_test.exe, out\freeride_test.exe, out\update_check.exe (+ PDBs);
+                   objects in out\obj\
 build.cmd test     the same, then runs every test (output in out\<test>.txt); exit code 0 = all passed
 ```
 
@@ -70,6 +87,11 @@ build.cmd test     the same, then runs every test (output in out\<test>.txt); ex
   action as the page's FREE RIDE; the promotion button's events gone; both main menu resources at their exact
   size) and the footer (BACK and SELECT kept, the A glyph check either kept or the
   glyph hidden for good).
+  It also patches both archives once more with an update notice (a long version, the worst case for the size): the
+  line on both CO-OP pages right after the list, with the skin, font, colour and box of THE STORY's
+  `InstallWarningText` and its offset from the list; only the two page layouts differ from the patch without a
+  notice, at their exact size and prefix word; without a newer release no notice widget at all. Leaves
+  `out\menu_patch\update-notice.patch.txt`.
 - `freeride_test`: Lua 5.1 chunks with 4-byte floats (made-up chunk round trip, the loader's code checks), our
   compiler's exact output for small snippets and its refusals, the Script resource layout and FNV-1 64 hashes, our
   Free Ride script (compiles, passes the checks, no SaveGame / test characters / garage fill names, the start
@@ -79,13 +101,24 @@ build.cmd test     the same, then runs every test (output in out\<test>.txt); ex
   freeraid_main.sds is patched (Script resource same size and prefix word, our chunk, new data hash, every other
   resource byte-identical). Leaves `out\freeride\` (patched archive, our chunk `FreerideScript.ours.luac`, its
   source and listing, the game script's listing).
+- `update_check`: core's update check test (version parsing and comparison, the endpoint's answer, fetch failures, a
+  whole check against a stand-in endpoint on 127.0.0.1) plus Mafia II's part: the menu line
+  (`UPDATE AVAILABLE: V0.2.0 AT JUSTADDMP.COM`; nothing for a non-version), the endpoint id `mafia2-de`, and the
+  finished check's answer reaching the menus at once, the same for both archives. No internet needed.
 - `menu_nav`: core's overlay panels (the F8 fallback) driven by injected keys.
 - `pad_nav`, `ui_prompts`: core's pad navigation and footer prompt logic (copied tests).
 
-Last result (2026-10-20, FREE RIDE in the main menu): build warning-free, all five tests pass (menu_patch_test 53
-checks, 39 of them against the installed game; freeride_test 63 checks, 12 of them against the installed game). Our chunk was also
+Last result (2026-10-20, update notice): build warning-free, all six tests pass (menu_patch_test 60 checks, 46 of
+them against the installed game; freeride_test 63 checks, 12 of them against the installed game; update_check 80
+checks). Our chunk was also
 listed with the independent Python lister used for the research: same functions and instruction sequences (267
 instructions; the game's script: 1380).
+The update check was also run against the live endpoint with a small harness (not the game) calling the dll's
+code path (`update_notice::Start` / `Line`, then the real gui-main.sds patched with the line): as 0.0.1 and with
+`--update-as 0.0.0` -> `no release published yet`, no line; `--update-url .../api/version/mafia-de` (v0.16.0) ->
+the line `UPDATE AVAILABLE: V0.16.0 AT JUSTADDMP.COM` on the CO-OP page; `--update-as 99.0.0` against mafia-de ->
+`up to date`; an unknown id -> `HTTP 404`, an unknown host -> `send, error 12007`, an unroutable address -> no
+answer after the 5 s wait; no line in each of those.
 
 ## Launch (the coordinator's test)
 
@@ -102,6 +135,12 @@ The launcher finds the game through Steam (app 1030830), starts `pc\Mafia II Def
 Optional `out\Mafia2Coop.ini`: `inject_method = thread` (if the early APC injection fails), `game_path = <install
 folder>` (if Steam lookup fails).
 
+Update check test flags (launcher arguments, passed to the dll as `MAFIA2COOP_UPDATE_AS` / `MAFIA2COOP_UPDATE_URL`):
+- `--update-as <version>`: check as if the mod were that version (e.g. `--update-as 0.0.0`); once Mafia II has a
+  release, an older version than it shows the notice.
+- `--update-url <url>`: ask another endpoint. Until Mafia II has a release, see the notice with
+  `--update-url https://justaddmp.com/api/version/mafia-de` (Mafia DE's newest release, newer than 0.0.1).
+
 ### What to look for in the log
 
 `out\logs\launcher-test.log`:
@@ -111,6 +150,20 @@ folder>` (if Steam lookup fails).
 
 `out\logs\mafia2coop-test.log`, in this order:
 - `Mafia2Coop 0.0.1, built ...`, `env SteamAppId=1030830`, `loaded by Mafia2Coop.exe`
+- The update check (any time before the menus; one result line):
+  `update check: asking https://justaddmp.com/api/version/mafia2-de (this is v0.0.1)` (with `--update-as` first
+  `update check: checking as version 0.0.0 (MAFIA2COOP_UPDATE_AS)`), then one of
+  `update check: no release published yet (this is v0.0.1)` (Mafia II today),
+  `update check: up to date (this is v..., newest release v...)`,
+  `update check: v0.2.0 is available (this is v0.0.1)`,
+  `update check: no answer from <url> (<what>, error N | HTTP 404); not checked this time`,
+  `update check: <url> did not answer with a version; not checked this time`.
+  When a newer release is out, at the first menu archive:
+  `update check: the CO-OP pages show "UPDATE AVAILABLE: V0.2.0 AT JUSTADDMP.COM" (waited N ms)` and per archive
+  `menu: gui.sds: /config/gui/ScreenLayouts/Cheats: update notice "..." under the list (stCoopUpdate,
+  InstallWarningText's look, at 0.5087, 0.5700)`, the same for gui-main.sds and `ScreenLayouts/LoadMission`
+  (at 0.1478, 0.5700). A slow network: `update check: no answer after waiting 5000 ms while the game loads its
+  menus; no notice this time`.
 - `module dxgi.dll: ...\pc\dxgi.dll  (not the system dll: ...)` - the user's ReShade
 - `menu: archive redirect installed (CreateFileW 1, CreateFileA 1, attribute queries 1), cache ...\out\cache`
 - `sds: game opens ...` lines: each archive path the game tries, once (up to 200); for every archive it tries
@@ -165,9 +218,13 @@ folder>` (if Steam lookup fails).
 4. **Pause menu** (load a save, Esc; not done in the 2026-10-18 test): a **CO-OP** entry under OPTIONS; it opens the CO-OP page in the look of the
    pause OPTIONS page, with the same six entries (FREE RIDE second); BACK returns to the pause menu. Screenshot it
    next to the pause OPTIONS page.
-5. **Fallback** (only if the native entries are missing): F8 opens core's overlay CO-OP panel over the game
+5. **Update notice** (start with `--update-url https://justaddmp.com/api/version/mafia-de` to see it before Mafia II
+   has a release): on the CO-OP page, under SETTINGS, a small red capital line `UPDATE AVAILABLE: V0.16.0 AT
+   JUSTADDMP.COM` (THE STORY's install warning look); the highlight never lands on it. The same line on the pause
+   menu's CO-OP page. Without the flag (no Mafia II release yet): no line.
+6. **Fallback** (only if the native entries are missing): F8 opens core's overlay CO-OP panel over the game
    (keyboard / mouse / pad, Esc closes); F7 toggles a small status text. Not the target look.
-6. Quit the game normally; nothing else to clean up (`out\cache\` is cleared at the next start).
+7. Quit the game normally; nothing else to clean up (`out\cache\` is cleared at the next start).
 
 ### Free Ride (in-game check, not done yet)
 
@@ -234,6 +291,18 @@ What would mean what:
   the highlight there; Enter on an entry does nothing; Esc and a click on the footer's BACK return to the main menu
   with CO-OP still selected. EXTRAS still opens and looks as before.
 
+## Verified in a menu-only launch of 2026-10-20 (update notice)
+
+One instance, `--log upd --update-url https://justaddmp.com/api/version/mafia-de`, 1280x720 windowed, muted, main
+menu only (no story, no Free Ride; the profile folder backed up and restored, all 22 files byte-identical). The check
+answered in 0.3 s (`v0.16.0 is available (this is v0.0.1)`), long before the menus (`waited 0 ms`); both archives
+were patched with the notice and loaded. The main menu shows THE STORY, CO-OP, FREE RIDE, ADDITIONAL CONTENT,
+EXTRAS, OPTIONS, EXIT (FREE RIDE seen for the first time; not selected). The CO-OP page shows the six entries and,
+under SETTINGS, `UPDATE AVAILABLE: V0.16.0 AT JUSTADDMP.COM` in the game's small red capitals, colon and dots
+drawn; the keys move the highlight through the entries only; Esc returns to the main menu. Screenshots (game window
+only) in `out\test-shots\2026-10-20-update-notice\` (not in the repo: they show the game's art). Seen in passing:
+DOWN on SETTINGS kept the highlight there (no wrap to the top).
+
 ## UNVERIFIED
 
 - Free Ride entirely (re-notes.md 5.1): that FREE RIDE's `game.mission.load` starts mission 0 in the DE, that the
@@ -244,7 +313,10 @@ What would mean what:
   the main menu's BACK. The main CO-OP page's footer
   without the A glyph check (pad only).
 
-- The pause menu entry and page (needs a loaded save; not done in the test so as not to touch the saves).
+- The pause menu entry and page (needs a loaded save; not done in the test so as not to touch the saves), and the
+  update notice on it.
+- The update notice with a real Mafia II release (the endpoint answers `latest: null` until then) and on a slow
+  network (the 5 s wait at the first menu archive).
 - Pad navigation and the pad's footer glyphs (no controller in the test), and the menu sounds (the game was muted;
   the page uses the same list, skin and footer widgets as EXTRAS, which carry the sounds).
 - That the padding is harmless everywhere: invisible filler group boxes in the page layouts, no-op

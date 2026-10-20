@@ -154,6 +154,18 @@ zeros):
   `screen.back`. The host layout keeps its root widget name. Daemons are not touched. Since 2026-10-19 the main
   page's FREE RIDE runs `game.mission.load` (section 5.1); to fit that action, the main page's footer A glyph is
   hidden for good instead of shown only with a pad (its controller check is the screen data that goes).
+- the update notice (since 2026-10-20, only when a newer release is out; README-dev): the game has its own page
+  notice - THE STORY page (`ScreenLayouts/TheStory`) has, right after its list `MenuList` (3 entries at
+  0.1391, 0.2456, rows 0.062), a statictext `InstallWarningText` (skin `statictext.textItem_Error`, CREAMPUF 0.0275,
+  capitals, colour 1,0,0, box 0.6 x 0.1 at 0.1478, 0.384; text id 73000009) that its screen shows while the game is
+  not fully installed (`if condition="game.IsInstalled"` -> `widget.setvisibility`). Our notice is a copy of that
+  widget with our literal text, right after the page's list at the same offset from it (x +0.0087, y 0.0476 above
+  the end of the last row; the box reaches below it): main CO-OP page at 0.1478, 0.5700, pause page at 0.5087,
+  0.5700. Layout only (no screen widget, visible from the start); the page layouts' fillers absorb it (main page 9
+  fillers left instead of 12 with the longest line tested). Seen in game 2026-10-20 on the main page: drawn in the
+  skin's own small condensed red capitals (not the serif of the list), colon and dots fine, never highlighted.
+  The main menu layout itself has no room for such a widget (about 1.5 KB; it is at its exact size since FREE RIDE
+  took the promotion button's place, and trimming its numbers gives about 560 bytes).
 - sizes: every patched resource is padded back to its exact original size (section 4).
 - `freeraid_main.sds` (the FREE RIDE mission's script archive) is redirected the same way, with our Free Ride
   script in its Script resource (section 5.1).
